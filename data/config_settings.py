@@ -43,3 +43,16 @@ def get_process_alliance():
         return config.getboolean('mission_settings', 'process_alliance')
     except:
         return True # Default to True if missing
+def get_hiring_mode():
+    try:
+        # Returns: 0 (Disabled), 1, 2, 3 (Days), or -1 (Automatic/Premium)
+        return config.getint('personnel_settings', 'hiring_mode', fallback=0)
+    except:
+        return 0
+
+def get_hiring_check_interval():
+    try:
+        # How often (in seconds) to check personnel. Default 1 hour (3600s)
+        return config.getint('delays', 'personnel_check', fallback=3600)
+    except:
+        return 3600
