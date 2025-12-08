@@ -1,16 +1,18 @@
 import asyncio
 import os
 import sys
+import time  # Added import
+
 from playwright.async_api import async_playwright
 from setup.login import login_single
 from data.config_settings import get_username, get_password, get_threads, get_headless, get_mission_delay, \
-    get_transport_delay
+    get_transport_delay, get_hiring_check_interval  # Added get_hiring_check_interval
 from utils.dispatcher import navigate_and_dispatch
 from utils.mission_data import check_and_grab_missions
 from utils.pretty_print import display_info, display_error, display_message
 from utils.transport import handle_transport_requests
 from utils.vehicle_data import gather_vehicle_data
-
+from utils.personnel_manager import manage_personnel  # Added import
 
 async def transport_logic(browser):
     display_info("Starting transportation logic.")
@@ -23,21 +25,36 @@ async def transport_logic(browser):
         except Exception as e:
             display_error(f"Error in transport logic: {e}")
 
-
 async def mission_logic(browsers_for_missions):
     display_info("Starting mission logic.")
     loop_count = 0
+    
+    # --- PHASE 1: Tracking Variables ---
+    last_personnel_check = 0
+    personnel_interval = get_hiring_check_interval() # e.g. 3600 seconds
+    
     while True:
         try:
             loop_count += 1
+            current_time = time.time()
+
+            # --- PHASE 1: Personnel Check Logic ---
+            # Run if enough time has passed since the last check
+            if current_time - last_personnel_check > personnel_interval:
+                # We use the first mission browser to handle management tasks
+                # This prevents all browsers from trying to manage stations at once
+                await manage_personnel(browsers_for_missions[0])
+                last_personnel_check = time.time()
             
-            # --- UPDATED LOGIC: Refresh vehicle data every 50 loops OR if file is missing ---
+            # --- Vehicle Data Refresh Logic ---
+            # Refresh every 50 loops OR if the file doesn't exist
             should_refresh_vehicles = not os.path.exists("data/vehicle_data.json") or (loop_count % 50 == 0)
             
             if should_refresh_vehicles:
                 display_info(f"Refreshing vehicle data (Loop {loop_count})...")
                 await gather_vehicle_data(browsers_for_missions, len(browsers_for_missions))
             
+            # --- Standard Mission Loop ---
             # Grab missions
             await check_and_grab_missions(browsers_for_missions, len(browsers_for_missions))
             
@@ -50,6 +67,8 @@ async def mission_logic(browsers_for_missions):
             
         except Exception as e:
             display_error(f"Error in mission logic: {e}")
+            # Add a small sleep here to prevent rapid-fire error loops
+            await asyncio.sleep(5)
 
 def show_menu():
     print("\n" + "╔" + "═"*35 + "╗")
