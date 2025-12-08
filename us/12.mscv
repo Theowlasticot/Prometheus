@@ -1,0 +1,8 @@
+{
+  "object" : 12,
+  "is_matchless" : false,
+  "pattern" : {
+    "base" : ["Mobile Command Vehicle", "mobile Command Vehicle", "Mobile Command Vehicles", "mobile Command Vehicles", "Battalion chief unit", "Battalion chief units", "battalion chief unit", "battalion chief units"],
+    "extend" : {}
+  }
+}

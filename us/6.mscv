@@ -1,0 +1,8 @@
+{
+  "object" : 6,
+  "is_matchless" : false,
+  "pattern" : {
+    "base" : ["[Mm]obile [Aa]ir|\\(?:>|[Uu]nit\\)"],
+    "extend" : {}
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "object" : 19,
+  "is_matchless" : false,
+  "pattern" : {
+    "base" : ["K-9 Unit", "K-9 Units", "Police Cars or Swat SUVs"],
+    "extend" : {}
+  }
+}

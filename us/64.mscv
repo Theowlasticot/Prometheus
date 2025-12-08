@@ -1,0 +1,10 @@
+{
+  "object" : 64,
+  "is_matchless" : false,
+  "pattern" : {
+    "base" : ["Foam Tender", "Foam Tenders"],
+    "extend" : {
+      "(?'firetrucksNeededFoam'\\d+) gal\\. foam": 1
+    }
+  }
+}

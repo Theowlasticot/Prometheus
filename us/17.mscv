@@ -1,0 +1,10 @@
+{
+  "object" : 17,
+  "is_matchless" : false,
+  "pattern" : {
+    "base" : ["ARFF", "arff"],
+    "extend" : {
+      "(\\d+) gal\\. foam" : 1
+    }
+  }
+}

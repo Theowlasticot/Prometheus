@@ -1,0 +1,10 @@
+{
+  "object" : 7,
+  "is_matchless" : false,
+  "pattern" : {
+    "base" : ["Water Tanker", "Water tanker", "water tanker", "Water Tankers"],
+    "extend" : {
+      "(\\d+) gal\\. water" : 1
+    }
+  }
+}
