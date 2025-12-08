@@ -155,6 +155,3 @@ The following features are planned for upcoming releases to enhance the automati
 
 ```
 
-
-Everything else in the **Roadmap** (Phases 2–5) aligns with features that are **not** currently present in the provided code files, so they are correctly listed as planned features.
-```
