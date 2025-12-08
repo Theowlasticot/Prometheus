@@ -15,7 +15,7 @@ Built with Python and Playwright, Prometheus is designed to handle mission dispa
 * **Mode Selection:** Choose between running Missions & Transport, Missions Only, or Transport Only.
 * **Alliance Sharing:** Automatically shares missions with your alliance if configured.
 * **Headless Mode:** Run the bot in the background without a visible browser window.
-* **Automatic Priority** Prioritize high earning missions and already running ones.
+* **Automatic Priority:** Prioritize high earning missions and already running ones.
 
 **⚠️ Note:** This bot is strictly for the **US Server**. Usage on other region servers may require significant modification to the `.mscv` definition files.
 
