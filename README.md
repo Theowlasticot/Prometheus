@@ -16,6 +16,8 @@ Built with Python and Playwright, Prometheus is designed to handle mission dispa
 * **Alliance Sharing:** Automatically shares missions with your alliance if configured.
 * **Headless Mode:** Run the bot in the background without a visible browser window.
 
+**⚠️ Note:** This bot is strictly for the **US Server**. Usage on other region servers may require significant modification to the `.mscv` definition files.
+
 ## 📋 Prerequisites
 
 * Python 3.8+
