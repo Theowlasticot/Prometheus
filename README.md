@@ -61,5 +61,5 @@ missions = 10
 # Delay (in seconds) between transport checks
 transport = 20
 
-⚠️ Disclaimer
+##⚠️ Disclaimer
 This software is for educational purposes only. Using bots or automation tools may violate the Terms of Service of MissionChief. The developer of Prometheus assumes no responsibility for any bans or penalties applied to your account. Use at your own risk.
