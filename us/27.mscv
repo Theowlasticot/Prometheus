@@ -1,0 +1,8 @@
+{
+  "object" : 27,
+  "is_matchless" : false,
+  "pattern" : {
+    "base" : ["BLS Ambulance"],
+    "extend" : {}
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "object" : 41,
+  "is_matchless" : false,
+  "pattern" : {
+    "base" : ["Crew cap semi"],
+    "extend" : {}
+  }
+}

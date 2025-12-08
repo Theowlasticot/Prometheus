@@ -1,0 +1,10 @@
+{
+  "object" : 1,
+  "is_matchless" : false,
+  "pattern" : {
+    "base" : ["Type 2 fire engine", "Firetrucks", "firetrucks", "Firetruck", "firetruck", "Firetruck or Heavy Rescue Vehicle"],
+    "extend" : {
+      "(?'firetrucksNeededFoam'\\d+) gal\\. foam": 1
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "object" : 45,
+  "is_matchless" : false,
+  "pattern" : {
+    "base" : ["FBI Bomb Technician Vehicle"],
+    "extend" : {}
+  }
+}

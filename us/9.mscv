@@ -1,0 +1,10 @@
+{
+  "object" : 9,
+  "is_matchless" : false,
+  "pattern" : {
+    "base" : ["HazMat", "hazmat"],
+    "extend" : {
+      "(\\d+)x HazMat" : 1
+    }
+  }
+}
