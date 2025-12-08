@@ -152,6 +152,3 @@ The following features are planned for upcoming releases to enhance the automati
       * `1`: Turbo
       * `...`
       * `8`: Extreme Slow
-
-```
-
