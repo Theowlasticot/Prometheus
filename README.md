@@ -68,3 +68,63 @@ transport = 20
 This software is for educational purposes only. Using bots or automation tools may violate the Terms of Service of MissionChief. The developer of Prometheus assumes no responsibility for any bans or penalties applied to your account. Use at your own risk.
 
 PS : I will update regularly to improve the bot, please contact me if you need any information about this project -> Discord : pouett123456_98797
+Here is a structured Roadmap text based on the features you requested. You can add this to your `README.md` or project documentation to outline the future development of **Prometheus**.
+
+***
+
+# 🗺️ Prometheus Development Roadmap
+
+The following features are planned for upcoming releases to enhance the automation, logic, and customization of the bot.
+
+## 👥 Phase 1: Personnel & Management Automation
+*Focus on station management and automating daily tasks.*
+
+* **Values/Logic:**
+    * **Automatic Hiring:** Enable automated personnel hiring for stations.
+    * **Hiring Duration:** Configurable hiring periods:
+        * `0`: Disabled (Default)
+        * `1-3`: Specific day duration
+        * `-1`: Automatic (Premium required)
+
+## 🚛 Phase 2: Advanced Transport & Logistics
+*Refining how patients and prisoners are handled to prevent overcrowding and optimize routing.*
+
+* **Hospital & Cell Logic:**
+    * **Capacity Limits:** Define the maximum number of patients/prisoners allowed in a building before skipping to the next available one.
+    * **Distance Limits:** Set a maximum distance (km) for transporting patients or prisoners to a destination.
+* **Alliance Integration:**
+    * **Alliance Buildings:** Toggle support for transporting to alliance hospitals/cells.
+    * **Alliance Distance:** Separate maximum distance setting for alliance buildings.
+* **Task Management:**
+    * **Speech Task Interval:** Configurable delay (default: 3s) between handling specific transport "speech" requests.
+    * **Toggle Speech Handling:** Option to enable/disable processing of transport requests entirely.
+
+## 🧩 Phase 3: Enhanced Mission Logic
+*Smarter dispatching decisions and finer control over what missions are run.*
+
+* **Mission Filters:**
+    * **Event Missions:** Toggle to enable/disable processing of event missions (default: enabled).
+    * **Alert Missions:** Toggle to enable/disable (post-)alert missions (default: enabled).
+    * **Distance Caps:** Set maximum dispatch distance for (post-)alert missions.
+    * **Re-open Missions:** Option to force re-opening of missions regardless of their state (default: disabled).
+* **Smart Dispatching:**
+    * **Dynamic Scaling:** Automatically adjust required vehicles based on water/personnel/patient needs (default: enabled).
+    * **Personnel Availability:** Check if vehicles have enough trained personnel ready before dispatching; disable vehicle if insufficient (default: disabled).
+    * **Alliance Fleet:** Option to "Consider Vehicles from Members" when calculating requirements (default: disabled).
+
+## 🤝 Phase 4: Alliance Collaboration
+*Improved sharing logic to support alliance play styles.*
+
+* **Conditional Sharing:**
+    * **Share on Transport:** Automatically share missions if a patient or prisoner transport is requested.
+    * **Share on Missing:** Automatically share missions if your fleet lacks the required vehicles.
+    * **General Sharing:** Master toggle to share all processed missions.
+
+## ⚙️ Phase 5: Core System Improvements
+*Quality of life updates for the bot's operation.*
+
+* **Game Speed Control:** New setting to adjust the simulation/action speed:
+    * `0`: Pause
+    * `1`: Turbo
+    * `...`
+    * `8`: Extreme Slow
