@@ -4,6 +4,7 @@ import os
 
 from utils.pretty_print import display_info, display_error
 from utils.vehicle_manager import VehicleManager
+from data.config_settings import get_share_alliance, get_process_alliance
 
 # Initialize the manager with the new logic
 VEHICLE_MANAGER = VehicleManager(data_folder="us")
@@ -53,6 +54,11 @@ async def navigate_and_dispatch(browsers):
         is_missing_mission = "missing" in mission_name.lower() or "incomplete" in mission_name.lower()
         is_alliance_mission = "[alliance]" in mission_name.lower()
 
+        # --- OPTION: Skip Alliance Missions if disabled ---
+        if is_alliance_mission and not get_process_alliance():
+            display_info(f"⏭️ Skipping Alliance Mission: {mission_name}")
+            continue
+
         display_info(f"Checking mission: {mission_name} ({credits_val} Cr) (ID: {mission_id})")
 
         try:
@@ -73,14 +79,15 @@ async def navigate_and_dispatch(browsers):
             display_info(f"⏭️ SKIPPING {mission_id} (Not Shared): {reason}")
             continue
             
-        # --- SHARE ---
-        try:
-            share_btn = await page.query_selector('#mission_alliance_share_btn')
-            if share_btn and await share_btn.is_visible():
-                await share_btn.click()
-                display_info(f"🤝 Shared mission {mission_id}.")
-                await page.wait_for_timeout(500)
-        except: pass
+        # --- SHARE (Controlled by Option) ---
+        if get_share_alliance():
+            try:
+                share_btn = await page.query_selector('#mission_alliance_share_btn')
+                if share_btn and await share_btn.is_visible():
+                    await share_btn.click()
+                    display_info(f"🤝 Shared mission {mission_id}.")
+                    await page.wait_for_timeout(500)
+            except: pass
 
         display_info(f"✅ Dispatching: {reason}")
 
@@ -158,11 +165,6 @@ async def navigate_and_dispatch(browsers):
                 if current_water >= req_water and current_foam >= req_foam: break
                 vid = await cb.get_attribute("value")
                 if vid in used_vehicle_ids: continue
-                
-                # Check 1: Is this ID a known water carrier in Vehicle.mscv?
-                # We need the vehicle's TYPE ID to check against the Manager.
-                # Since we don't have the type ID easily available here without a reverse lookup,
-                # we rely on the game's HTML attributes 'wasser_amount'.
                 
                 w = int(await cb.get_attribute("wasser_amount") or 0)
                 f = int(await cb.get_attribute("foam_amount") or await cb.get_attribute("foam_amount_display") or 0)
