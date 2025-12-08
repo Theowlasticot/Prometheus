@@ -97,7 +97,7 @@ The following features are planned for upcoming releases to enhance the automati
 
 *Focus on station management and automating daily tasks.*
 
-> **Status:** ✅ Implemented in v1.0
+> **Status:** ✅ Implemented in v2.0
 
   * **Values/Logic:**
       * **Automatic Hiring:** Enable automated personnel hiring for stations.
