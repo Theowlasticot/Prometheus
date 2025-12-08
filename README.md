@@ -1,6 +1,6 @@
 # Prometheus - MissionChief Bot (US Server)
 
-**Prometheus** is a sophisticated automation bot designed for the US server of the browser game [MissionChief](https://www.missionchief.com).
+**Prometheus** is a automation bot designed for the US server of the browser game [MissionChief](https://www.missionchief.com).
 
 Built with Python and Playwright, Prometheus is designed to handle mission dispatching, vehicle management, and patient/prisoner transport efficiently. It features a smart vehicle manager that scrapes your current fleet to make intelligent dispatch decisions based on mission requirements.
 
@@ -63,3 +63,5 @@ transport = 20
 ```
 ## ⚠️ Disclaimer
 This software is for educational purposes only. Using bots or automation tools may violate the Terms of Service of MissionChief. The developer of Prometheus assumes no responsibility for any bans or penalties applied to your account. Use at your own risk.
+
+PS : I will update regularly to improve the bot, please contact me if you need any information about this project -> Discord : pouett123456_98797
