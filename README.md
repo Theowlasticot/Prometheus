@@ -30,7 +30,7 @@ Built with Python and Playwright, Prometheus is designed to handle mission dispa
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/your-username/prometheus.git](https://github.com/your-username/prometheus.git)
+    git clone [https://github.com/Theowlasticot/prometheus.git](https://github.com/Theowlasticot/prometheus.git)
     cd prometheus
     ```
 
