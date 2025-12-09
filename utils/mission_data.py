@@ -69,9 +69,10 @@ async def get_on_scene_vehicles(page):
     on_scene_counts = {} # Key: Vehicle Type ID (int) -> Count (int)
     
     # We look for the <a> tag that contains the vehicle_type_id attribute
+    # UPDATED: Removed 'tbody' to ensure matches even if the tag is missing in raw HTML
     selectors = [
-        '#mission_vehicle_at_mission tbody tr td a[vehicle_type_id]',
-        '#mission_vehicle_driving tbody tr td a[vehicle_type_id]'
+        '#mission_vehicle_at_mission tr td a[vehicle_type_id]',
+        '#mission_vehicle_driving tr td a[vehicle_type_id]'
     ]
 
     for selector in selectors:
