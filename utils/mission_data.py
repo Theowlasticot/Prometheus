@@ -10,33 +10,8 @@ VEHICLE_MANAGER = VehicleManager(data_folder="us")
 
 NON_VEHICLE_KEYWORDS = [
     'water', 'liters', 'gallons', 'foam', 'mousse', 'eau',
-    'probability', 'patient', '%', 'average', 'min', 'max', 'credits'
+    'probability', 'patient', '%', 'min', 'max'  # Removed 'credits' and 'average' to allow parsing
 ]
-
-KNOWN_MISSIONS = {}
-KNOWN_MISSIONS_NAMES = {} 
-KNOWN_MISSIONS_PATH = 'data/known_missions.json'
-
-def load_known_missions():
-    global KNOWN_MISSIONS, KNOWN_MISSIONS_NAMES
-    if os.path.exists(KNOWN_MISSIONS_PATH):
-        try:
-            with open(KNOWN_MISSIONS_PATH, 'r', encoding='utf-8') as f:
-                KNOWN_MISSIONS = json.load(f)
-                KNOWN_MISSIONS_NAMES = {}
-                for m_id, data in KNOWN_MISSIONS.items():
-                    if 'name' in data:
-                        clean_name = data['name'].lower().replace('\xa0', ' ').strip()
-                        KNOWN_MISSIONS_NAMES[clean_name] = data
-        except Exception: pass
-
-def save_known_missions():
-    try:
-        with open(KNOWN_MISSIONS_PATH, 'w', encoding='utf-8') as f:
-            json.dump(KNOWN_MISSIONS, f, indent=4)
-    except Exception: pass
-
-load_known_missions()
 
 def load_vehicle_data():
     file_path = 'data/vehicle_data.json'
@@ -85,39 +60,41 @@ async def split_mission_ids_among_threads(mission_list, browsers, num_threads):
             mission_data[mission_id] = data
     return mission_data
 
-async def get_on_scene_vehicles(page, vehicle_inventory):
-    on_scene_counts = {} # Key: Generic Type ID (int)
+# --- [FIX 1] UPDATED ON-SCENE DETECTION ---
+async def get_on_scene_vehicles(page):
+    """
+    Scrapes the 'Units Responding' and 'Vehicles on Scene' tables.
+    Uses the HTML 'vehicle_type_id' attribute directly for perfect accuracy.
+    """
+    on_scene_counts = {} # Key: Vehicle Type ID (int) -> Count (int)
+    
+    # We look for the <a> tag that contains the vehicle_type_id attribute
     selectors = [
-        '#mission_vehicle_at_mission tbody tr td a[href^="/vehicles/"]',
-        '#mission_vehicle_driving tbody tr td a[href^="/vehicles/"]'
+        '#mission_vehicle_at_mission tbody tr td a[vehicle_type_id]',
+        '#mission_vehicle_driving tbody tr td a[vehicle_type_id]'
     ]
 
     for selector in selectors:
         try:
             vehicle_elements = await page.query_selector_all(selector)
             for el in vehicle_elements:
-                href = await el.get_attribute('href')
-                if not href: continue
-                v_id = href.split('/')[-1]
+                # Direct extraction from HTML - No database lookup needed
+                type_id_str = await el.get_attribute('vehicle_type_id')
                 
-                # Check user inventory to find the TYPE ID for this vehicle
-                found_type_id = None
-                for type_id_str, ids_list in vehicle_inventory.items():
-                    if v_id in ids_list:
-                        found_type_id = int(type_id_str)
-                        break
-                
-                if found_type_id is not None:
-                    on_scene_counts[found_type_id] = on_scene_counts.get(found_type_id, 0) + 1
-        except Exception: pass
+                if type_id_str:
+                    try:
+                        v_type_id = int(type_id_str)
+                        on_scene_counts[v_type_id] = on_scene_counts.get(v_type_id, 0) + 1
+                    except ValueError:
+                        continue
+        except Exception: 
+            pass
             
     return on_scene_counts
 
 async def gather_mission_info(mission_entries, browser, thread_id):
-    global KNOWN_MISSIONS, KNOWN_MISSIONS_NAMES
     mission_data = {}
     page = browser.contexts[0].pages[0]
-    vehicle_inventory = load_vehicle_data()
 
     for index, mission_entry in enumerate(mission_entries):
         mission_id = mission_entry['id']
@@ -145,7 +122,7 @@ async def gather_mission_info(mission_entries, browser, thread_id):
             patient_elements = await page.query_selector_all('div.mission_patient')
             current_patient_count = len(patient_elements)
 
-            # 1. Alerts (Water/Foam)
+            # 1. Alerts (Water/Foam/Prisoners)
             try:
                 alerts = await page.query_selector_all('div.alert.alert.alert-danger')
                 for alert in alerts:
@@ -160,7 +137,7 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                          await handle_prisoner_transport(page)
             except: pass
 
-            # 2. Missing Vehicles (Red Text)
+            # 2. Missing Vehicles (Red Text) - STRICT MODE
             try:
                 missing_vehicles_div = await page.query_selector('div[data-requirement-type="vehicles"]')
                 if missing_vehicles_div:
@@ -206,73 +183,64 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 }
                 continue
 
-            # 3. Requirements (Lookup or Scrape)
+            # 3. Requirements & Credits (Scrape from Help)
             raw_requirements = []
-            known_data = KNOWN_MISSIONS.get(mission_type)
-            if not known_data:
-                clean_page_name = mission_name.lower().replace('\xa0', ' ').strip()
-                known_data = KNOWN_MISSIONS_NAMES.get(clean_page_name)
-                if known_data:
-                    KNOWN_MISSIONS[mission_type] = known_data
-                    save_known_missions()
+            
+            try:
+                await page.click('#mission_help')
+                await page.wait_for_selector('#iframe-inside-container', timeout=5000)
+                
+                # --- [FIX 2] CALL UPDATED FUNCTION ---
+                # Retrieve BOTH requirements and credits
+                raw_requirements, scraped_credits = await gather_vehicle_requirements(page)
+                credits_value = scraped_credits
+                
+                await page.keyboard.press('Escape')
+                await asyncio.sleep(0.5)
+            except Exception: pass
 
-            if known_data:
-                credits_value = known_data.get('credits', 0)
-                json_reqs = known_data.get('requirements', [])
-                for r in json_reqs:
-                    r_text = r.get('text', '')
-                    r_count = r.get('count', 0)
-                    if "Water required" in r_text:
-                        water_needed = max(water_needed, r_count)
-                        continue
-                    if "Foam required" in r_text:
-                        foam_needed = max(foam_needed, r_count)
-                        continue
-                    if "probability" in r_text.lower(): continue
-                    clean_name = r_text.replace("Required", "").strip()
-                    clean_name = remove_plural_suffix(clean_name)
-                    raw_requirements.append({"name": clean_name, "count": r_count})
-            else:
-                try:
-                    await page.click('#mission_help')
-                    await page.wait_for_selector('#iframe-inside-container', timeout=5000)
-                    raw_requirements = await gather_vehicle_requirements(page)
-                    await page.keyboard.press('Escape')
-                    await asyncio.sleep(0.5)
-                except Exception: pass
-
-            # 4. Intelligent Missing Calculation (ID Based)
-            vehicles_on_scene = await get_on_scene_vehicles(page, vehicle_inventory)
+            # 4. Intelligent Missing Calculation (HTML Attribute Based)
+            # Logic: REQUIRED (Step 3) - ON SCENE (Step 4, live from HTML tags)
+            vehicles_on_scene = await get_on_scene_vehicles(page)
             final_vehicles_needed = []
             
+            # A. Calculate General Requirements (Fire/Police)
             for req in raw_requirements:
                 req_name = req["name"]
                 req_count = req["count"]
                 if "ambulance" in req_name.lower(): continue
 
-                # Get Generic IDs for this Requirement
+                # 1. Get the list of IDs that satisfy this requirement (from us/ folder)
                 required_generic_ids = VEHICLE_MANAGER.get_valid_ids(req_name)
                 
+                # 2. Count how many of these are already on scene/en route
                 count_on_scene = 0
                 for type_id, scene_count in vehicles_on_scene.items():
                     if type_id in required_generic_ids:
                         count_on_scene += scene_count
                 
+                # 3. Calculate strictly what is left
                 needed_count = max(0, req_count - count_on_scene)
+                
                 if needed_count > 0:
                     final_vehicles_needed.append({"name": req_name, "count": needed_count})
             
             vehicles = final_vehicles_needed
             
+            # B. Calculate Ambulance Requirements (Patients vs Ambulances)
             if current_patient_count > 0:
-                # Ambulances
+                # Get all IDs that count as an ambulance
                 amb_generic_ids = VEHICLE_MANAGER.get_valid_ids("ambulance")
+                
+                # Count ambulances currently on scene/en route
                 amb_on_scene = 0
                 for type_id, scene_count in vehicles_on_scene.items():
                      if type_id in amb_generic_ids:
                          amb_on_scene += scene_count
                 
+                # Logic: Patients - Ambulances On Scene = Needed
                 needed_amb = max(0, current_patient_count - amb_on_scene)
+                
                 if needed_amb > 0:
                      vehicles.append({"name": "ambulance", "count": needed_amb})
 
@@ -296,11 +264,29 @@ def remove_plural_suffix(vehicle_name):
         vehicle_name_parts[-1] = vehicle_name_parts[-1][:-1]
     return ' '.join(vehicle_name_parts)
 
+# --- [FIX 3] REPAIRED SCRAPING LOGIC ---
 async def gather_vehicle_requirements(page):
     vehicle_requirements = []
+    credits = 0 
+    
     requirement_table = await page.query_selector(
         'div.col-md-4 > table:has(th:has-text("Vehicle and Personnel Requirements"))')
 
+    # Also grab credit table
+    credit_table = await page.query_selector(
+        'div.col-md-4 > table:has(th:has-text("Reward and Precondition"))')
+
+    # 1. Scrape Credits
+    if credit_table:
+        rows = await credit_table.query_selector_all('tbody tr')
+        for row in rows:
+            text = (await row.inner_text()).lower()
+            if "average credits" in text or "credits" in text:
+                match = re.search(r'([\d,]+)', text)
+                if match:
+                    credits = int(match.group(1).replace(',', ''))
+
+    # 2. Scrape Vehicles
     if not requirement_table:
         requirement_table = await page.query_selector('#lightbox_box table')
 
@@ -317,7 +303,6 @@ async def gather_vehicle_requirements(page):
             lower_name = raw_name.lower()
             
             if "probability" in lower_name or "%" in lower_name or "patient" in lower_name: continue
-            if "average credits" in lower_name: continue
             
             if any(k in lower_name for k in NON_VEHICLE_KEYWORDS):
                 if not any(valid in lower_name for valid in ["tanker", "tender", "vehicle", "rescue", "trailer", "boat"]):
@@ -332,7 +317,7 @@ async def gather_vehicle_requirements(page):
             
             vehicle_requirements.append({"name": vehicle_name, "count": vehicle_count})
 
-    return vehicle_requirements
+    return vehicle_requirements, credits
 
 async def handle_prisoner_transport(page):
     try:
