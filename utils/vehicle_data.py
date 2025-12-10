@@ -87,7 +87,6 @@ async def process_vehicle_chunk(browser, vehicle_ids, thread_id):
             type_id = None
             
             # Method 1: Extract ID from the 'Vehicle type' link (e.g. /fahrzeugfarbe/5)
-            # This is the most accurate method based on your logs.
             try:
                 type_link = await page.query_selector('#vehicle-attr-type a')
                 if type_link:
@@ -98,7 +97,7 @@ async def process_vehicle_chunk(browser, vehicle_ids, thread_id):
                         type_id = match.group(1)
             except: pass
 
-            # Method 2: Fallback to Image attribute (seen in your list view)
+            # Method 2: Fallback to Image attribute
             if not type_id:
                 try:
                     img = await page.query_selector('img.vehicle_image_reload')
