@@ -6,18 +6,25 @@ from utils.pretty_print import display_info, display_error
 from utils.vehicle_manager import VehicleManager
 from data.config_settings import get_share_alliance, get_process_alliance
 
-# Initialize the manager with the new logic
 VEHICLE_MANAGER = VehicleManager(data_folder="us")
 VEHICLE_DATA_CACHE = None
+USER_TO_SYSTEM_MAP = {} 
 
 async def load_vehicle_data(force=False):
-    global VEHICLE_DATA_CACHE
+    global VEHICLE_DATA_CACHE, USER_TO_SYSTEM_MAP
     if VEHICLE_DATA_CACHE is None or force:
         try:
             with open('data/vehicle_data.json', 'r') as file:
                 VEHICLE_DATA_CACHE = json.load(file)
+            
+            # Build Reverse Map for Intelligent Logic
+            USER_TO_SYSTEM_MAP = {}
+            for sys_id, user_ids in VEHICLE_DATA_CACHE.items():
+                for uid in user_ids:
+                    USER_TO_SYSTEM_MAP[str(uid)] = int(sys_id)
         except:
             VEHICLE_DATA_CACHE = {}
+            USER_TO_SYSTEM_MAP = {}
     return VEHICLE_DATA_CACHE
 
 async def navigate_and_dispatch(browsers):
@@ -31,7 +38,6 @@ async def navigate_and_dispatch(browsers):
     await load_vehicle_data(force=True)
     page = browsers[0].contexts[0].pages[0]
 
-    # Priority Sort
     sorted_missions = sorted(
         mission_data.items(),
         key=lambda item: (
@@ -54,7 +60,6 @@ async def navigate_and_dispatch(browsers):
         is_missing_mission = "missing" in mission_name.lower() or "incomplete" in mission_name.lower()
         is_alliance_mission = "[alliance]" in mission_name.lower()
 
-        # --- OPTION: Skip Alliance Missions if disabled ---
         if is_alliance_mission and not get_process_alliance():
             display_info(f"⏭️ Skipping Alliance Mission: {mission_name}")
             continue
@@ -68,7 +73,6 @@ async def navigate_and_dispatch(browsers):
             display_error(f"Mission {mission_id} failed to load.")
             continue
 
-        # --- CHECK AVAILABILITY ---
         if is_missing_mission or is_alliance_mission:
             is_doable = True
             reason = "Force Dispatch (Alliance or Incomplete)"
@@ -79,7 +83,6 @@ async def navigate_and_dispatch(browsers):
             display_info(f"⏭️ SKIPPING {mission_id} (Not Shared): {reason}")
             continue
             
-        # --- SHARE (Controlled by Option) ---
         if get_share_alliance():
             try:
                 share_btn = await page.query_selector('#mission_alliance_share_btn')
@@ -113,20 +116,30 @@ async def navigate_and_dispatch(browsers):
             
             if "ambulance" in req_name.lower(): continue
 
-            # Get allowed IDs using the new smart manager
             valid_ids = await get_valid_ids_for_type(req_name) 
             selected = 0
             
             for cb in available_vehicles_elements:
-                if selected >= req_count: break
                 v_id = await cb.get_attribute("value")
-                
                 is_checked = await cb.is_checked()
+                
                 if v_id in used_vehicle_ids or is_checked: 
-                    if is_checked and v_id not in used_vehicle_ids: used_vehicle_ids.append(v_id)
+                    if is_checked and v_id not in used_vehicle_ids: 
+                        used_vehicle_ids.append(v_id)
                     continue
                 
                 if v_id in valid_ids:
+                    # SMART QUANTITY LOGIC
+                    sys_id = USER_TO_SYSTEM_MAP.get(str(v_id))
+                    
+                    # Dynamic Target Calculation (Regex Match)
+                    current_target = req_count
+                    if sys_id:
+                        current_target = VEHICLE_MANAGER.get_required_quantity(sys_id, req_name, req_count)
+                    
+                    if selected >= current_target: 
+                        break
+
                     await click_vehicle(page, cb)
                     used_vehicle_ids.append(v_id)
                     
@@ -135,7 +148,7 @@ async def navigate_and_dispatch(browsers):
                     current_water += w
                     current_foam += f
                     
-                    display_info(f"Selected {req_name} (ID: {v_id})")
+                    display_info(f"Selected {req_name} (ID: {v_id}) [Target: {current_target}]")
                     selected += 1
 
         # --- AMBULANCES ---
@@ -156,15 +169,28 @@ async def navigate_and_dispatch(browsers):
                     display_info(f"Selected ambulance (ID: {v_id})")
                     ambulances_sent += 1
 
-        # --- RESOURCES ---
+        # --- RESOURCES (Capability Optimized) ---
         if req_water > current_water or req_foam > current_foam:
-            water_carrier_ids = [str(x) for x in VEHICLE_MANAGER.get_water_carriers()]
+            potential_foam_ids = VEHICLE_MANAGER.get_ids_with_capability("FOAM")
+            potential_water_ids = VEHICLE_MANAGER.get_ids_with_capability("WATER")
             
             remaining = await page.query_selector_all('input.vehicle_checkbox:not(:checked)')
             for cb in remaining:
                 if current_water >= req_water and current_foam >= req_foam: break
                 vid = await cb.get_attribute("value")
                 if vid in used_vehicle_ids: continue
+                
+                sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
+                if not sys_id: continue 
+                
+                # Check Capabilities in DB first to save time
+                needs_check = False
+                if req_foam > current_foam and sys_id in potential_foam_ids:
+                    needs_check = True
+                if req_water > current_water and sys_id in potential_water_ids:
+                    needs_check = True
+                    
+                if not needs_check: continue
                 
                 w = int(await cb.get_attribute("wasser_amount") or 0)
                 f = int(await cb.get_attribute("foam_amount") or await cb.get_attribute("foam_amount_display") or 0)
@@ -204,7 +230,6 @@ async def check_mission_requirements_global_percent(page, mission_data):
     total_found = 0
     
     simulation_pool = available_ids_pool.copy()
-    
     IGNORED = ['ambulance', 'ems', 'patient']
 
     for req in vehicle_requirements:
@@ -241,18 +266,12 @@ async def click_vehicle(page, checkbox):
     await page.evaluate('(checkbox) => { checkbox.click(); checkbox.dispatchEvent(new Event("change", { bubbles: true })); }', checkbox)
 
 async def get_valid_ids_for_type(target_name):
-    # Load user's garage data: { "Type_ID": [vehicle_id_1, vehicle_id_2] }
     user_vehicle_data = await load_vehicle_data() 
-    
-    # 1. Manager returns list of valid TYPE IDs (integers)
-    # e.g. "Police Car" -> [10, 19, 23, 47]
     allowed_generic_ids = VEHICLE_MANAGER.get_valid_ids(target_name)
     
     valid_ids_in_garage = []
-    
-    # 2. Match User Garage to Allowed Types
     for allowed_id in allowed_generic_ids:
-        str_id = str(allowed_id) # JSON keys are always strings
+        str_id = str(allowed_id)
         if str_id in user_vehicle_data:
             valid_ids_in_garage.extend(user_vehicle_data[str_id])
             
