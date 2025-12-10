@@ -21,7 +21,7 @@ async def manage_personnel(browser):
 
         # Select all buildings from the list
         # Filtering for relevant building types (Fire, Rescue, Police, etc.)
-        # Based on your HTML: building_type_id="0" is Fire, "3" is Rescue, "5" is Police
+        # building_type_id="0" is Fire, "3" is Rescue, "5" is Police
         # We generally want to check all stations that allow hiring.
         building_elements = await page.query_selector_all('.building_list_li a[href^="/buildings/"]')
         
@@ -99,11 +99,7 @@ async def handle_hiring(page, building_id, mode):
                 display_error(f"Could not find {mode}-day button for {building_id}.")
                 
         elif mode == -1:
-            # Premium Automatic
-            # Usually looks for a specific class or text if not standard
-            # If standard logic applies for premium "Automatic" button (rarely used in basic bots),
-            # often users just want the max (3 days) clicked repeatedly.
-            # Assuming -1 might be a specific button or just 3 days fallback
+            # Premium Automatic not implemented yet !!
             btn_selector = f"a[href='/buildings/{building_id}/hire_do/3']" # Defaulting to max
             btn = await page.query_selector(btn_selector)
             if btn:
@@ -111,4 +107,5 @@ async def handle_hiring(page, building_id, mode):
                 display_info(f"Started recruitment (Automatic/Max) for {building_id}.")
 
     except Exception as e:
+
         display_error(f"Failed to hire at {building_id}: {e}")
