@@ -1,45 +1,52 @@
-# Prometheus - MissionChief Bot (US Server)
+# Prometheus - MissionChief Bot (US Server) - V3
 
-**Prometheus** is a automation bot designed for the US server of the browser game [MissionChief](https://www.missionchief.com).
+**Prometheus V3** is an advanced automation bot designed for the US server of the browser game [MissionChief](https://www.missionchief.com).
 
-Built with Python and Playwright, Prometheus is designed to handle mission dispatching, vehicle management, and patient/prisoner transport efficiently. It features a smart vehicle manager that scrapes your current fleet to make intelligent dispatch decisions based on mission requirements.
+Built with Python and Playwright, Prometheus handles mission dispatching, intelligent fleet management, prisoner/patient transport, and station personnel recruitment. V3 introduces a robust **CLI Menu System**, allowing you to choose specifically between mission dispatching, transport logic, or running both simultaneously across multiple browser threads.
 
 > **Note:** This project is inspired by [MissionchiefBot-X](https://github.com/NatesHonor/MissionchiefBot-X).
 
-## 🚀 Features
+## 🚀 Key Features (V3)
 
-* **Smart Dispatching:** Analyzes mission requirements (including water, foam, and personnel) and selects the appropriate vehicles from your fleet.
-* **Transport Logic:** Automatically handles transport requests for ambulances and prisoner transport.
-* **Fleet Management:** Scrapes and indexes your personal vehicle IDs to ensure the bot knows exactly what resources are available.
-* **Personnel Management:** Automatically hires new personnel for your stations with configurable hiring durations (1-3 days or Automatic).
-* **Alliance Integration:** * **Sharing:** Automatically shares missions with your alliance if configured.
-    * **Filtering:** Option to ignore or process alliance missions.
-* **Multi-Browser Support:** Configure multiple browser threads to handle high volumes of missions or separate tasks.
-* **Mode Selection:** Choose between running Missions & Transport, Missions Only, or Transport Only.
-* **Headless Mode:** Run the bot in the background without a visible browser window.
-* **Automatic Priority:** Prioritize high earning missions and already running ones.
+  * **Smart Dispatching:** Analyzes mission requirements (including Water, Foam, SWAT, K9, and Personnel counts) and selects the appropriate vehicles based on your actual fleet capabilities.
+  * **Intelligent Transport:**
+      * Automatically transports patients to the nearest hospital.
+      * Transports prisoners to cells.
+      * **Auto-Release:** Automatically releases prisoners if no cells are available.
+  * **Personnel Manager:** Automatically checks stations and hires new personnel based on your configuration (1-3 days or Automatic).
+  * **CLI Menu System:** Choose your operation mode on startup (Missions & Transport, Missions Only, or Transport Only).
+  * **Fleet Indexing:** Scrapes and indexes your personal vehicle IDs to map generic names (e.g., "Type 1 Engine") to your specific system IDs.
+  * **Alliance Integration:**
+      * **Sharing:** Options to automatically share missions.
+      * **Filtering:** Options to process or ignore alliance missions.
+  * **Multi-Threading:** Configure multiple browser instances to handle high mission volumes efficiently.
+  * **Headless Mode:** Run the bot in the background without visible windows.
 
-**⚠️ Note:** This bot is strictly for the **US Server**. Usage on other region servers may require significant modification to the `.mscv` definition files.
+**⚠️ Region Warning:** Currently, this bot is optimized for the **US Server**. Usage on other region servers will require modifying the `.mscv` definition files in the `us/` folder. **However, international support is our top priority for the next update (see Roadmap).**
 
 ## 📋 Prerequisites
 
-* Python 3.8+
-* [Playwright](https://playwright.dev/python/)
+  * Python 3.8+
+  * [Playwright](https://playwright.dev/python/)
+  * Google Chrome / Chromium installed
 
 ## 🛠️ Installation
 
 1.  **Clone the repository:**
+
     ```bash
-    git clone [https://github.com/Theowlasticot/prometheus.git](https://github.com/Theowlasticot/prometheus.git)
+    git clone https://github.com/Theowlasticot/prometheus.git
     cd prometheus
     ```
 
 2.  **Install dependencies:**
+
     ```bash
     pip install -r requirements.txt
     ```
 
 3.  **Install Playwright browsers:**
+
     ```bash
     playwright install
     ```
@@ -47,7 +54,9 @@ Built with Python and Playwright, Prometheus is designed to handle mission dispa
 ## ⚙️ Configuration
 
 1.  Open `config.ini` in the root directory.
-2.  Fill in your MissionChief credentials and adjust settings:
+2.  Fill in your MissionChief credentials and adjust the settings. Below is the configuration structure for **V3**:
+
+<!-- end list -->
 
 ```ini
 [credentials]
@@ -55,10 +64,16 @@ username = your_email@example.com
 password = your_password
 
 [browser_settings]
-# Set to true to hide the browser window
-headless = false
+# Set to true to hide the browser window (run in background)
+headless = true
 # Number of browser threads to launch
 browsers = 2
+
+[personnel_settings]
+# 0: Disabled
+# 1, 2, 3: Recruit for X days
+# -1: Automatic (Requires Premium)
+hiring_mode = 3
 
 [delays]
 # Delay (in seconds) between mission checks
@@ -68,87 +83,74 @@ transport = 20
 # Delay (in seconds) between personnel checks (e.g., 3600 = 1 hour)
 personnel_check = 3600
 
-[personnel_settings]
-# 0: Disabled
-# 1, 2, 3: Recruit for X days
-# -1: Automatic (Requires Premium)
-hiring_mode = 3
-
 [mission_settings]
 # Set to false to stop sharing missions with your alliance
 share_alliance = true
 # Set to false if you want to ignore alliance missions completely
 process_alliance = true
-````
+```
+
+## 🖥️ Usage
+
+Run the bot using Python:
+
+```bash
+python Main.py
+```
+
+Upon starting, you will be presented with the **V3 Menu**:
+
+```text
+╔═══════════════════════════════════╗
+║       MISSIONCHIEF BOT MENU       ║
+╠═══════════════════════════════════╣
+║ 1. Run Missions & Transport [Def] ║
+║ 2. Run Missions Only              ║
+║ 3. Run Transport Only             ║
+║ 4. Exit                           ║
+╚═══════════════════════════════════╝
+```
+
+  * **Option 1 (Default):** Dedicates one browser thread to Transport logic and the remaining threads to Mission Dispatching. (Requires `browsers = 2` or more in config).
+  * **Option 2:** Uses **all** available threads for Mission Dispatching.
+  * **Option 3:** Dedicates the browser solely to Transport logic.
+
+## 🗺️ Prometheus Development Roadmap
+
+### 🌍 The Big Next Step: International Support
+
+**Multi-Server Support is coming\!**
+The biggest focus for upcoming updates is breaking the US-only limitation. We are actively developing a framework to support multiple regions (UK, AU, DE, etc.) out of the box, allowing users worldwide to utilize Prometheus without complex configuration changes.
+
+### ✅ Completed Features
+
+  * **Phase 1: Personnel Management:** Fully implemented. The bot now iterates through buildings and handles hiring based on `personnel_settings`.
+  * **Smart Vehicle Logic:** "Water", "Foam", and "Personnel" counting logic is implemented via `vehicle_manager.py` and `.mscv` pattern matching.
+  * **Transport Logic:** Basic transport handling (Nearest Hospital/Cell + Prisoner Release) is active.
+
+### 🚧 Upcoming / Planned (Phase 2 & Beyond)
+
+**Advanced Transport & Logistics**
+
+  * **Capacity Limits:** Define maximum patients/prisoners per building to prevent queue overflows.
+  * **Distance Limits:** Set max kilometers for transport destinations.
+  * **Alliance Buildings:** Settings to toggle usage of alliance hospitals/cells specifically.
+
+**Enhanced Mission Logic**
+
+  * **Event/Alert Filters:** Toggles to specifically ignore Event missions or Storm alerts.
+  * **Dynamic Scaling:** Further refinement of vehicle requirements for complex large-scale missions.
+
+**Core System Improvements**
+
+  * **Game Speed Control:** Settings to adjust the simulation speed directly via the bot.
 
 ## ⚠️ Disclaimer
 
-This software is for educational purposes only. Using bots or automation tools may violate the Terms of Service of MissionChief. The developer of Prometheus assumes no responsibility for any bans or penalties applied to your account. Use at your own risk.
-
-PS : I will update regularly to improve the bot, please contact me if you need any information about this project -\> Discord : pouett123456_98797
+This software is for educational purposes only. Using bots or automation tools may violate the Terms of Service of MissionChief/Leitstellenspiel. The developer of Prometheus assumes no responsibility for any bans or penalties applied to your account. Use at your own risk.
 
 -----
 
-# 🗺️ Prometheus Development Roadmap
-
-The following features are planned for upcoming releases to enhance the automation, logic, and customization of the bot.
-
-## 👥 Phase 1: Personnel & Management Automation
-
-*Focus on station management and automating daily tasks.*
-
-> **Status:** ✅ Implemented in v2.0
-
-  * **Values/Logic:**
-      * **Automatic Hiring:** Enable automated personnel hiring for stations.
-      * **Hiring Duration:** Configurable hiring periods:
-          * `0`: Disabled (Default)
-          * `1-3`: Specific day duration
-          * `-1`: Automatic (Premium required)
-
-## 🚛 Phase 2: Advanced Transport & Logistics
-
-*Refining how patients and prisoners are handled to prevent overcrowding and optimize routing.*
-
-  * **Hospital & Cell Logic:**
-      * **Capacity Limits:** Define the maximum number of patients/prisoners allowed in a building before skipping to the next available one.
-      * **Distance Limits:** Set a maximum distance (km) for transporting patients or prisoners to a destination.
-  * **Alliance Integration:**
-      * **Alliance Buildings:** Toggle support for transporting to alliance hospitals/cells.
-      * **Alliance Distance:** Separate maximum distance setting for alliance buildings.
-  * **Task Management:**
-      * **Speech Task Interval:** Configurable delay (default: 3s) between handling specific transport "speech" requests.
-      * **Toggle Speech Handling:** Option to enable/disable processing of transport requests entirely.
-
-## 🧩 Phase 3: Enhanced Mission Logic
-
-*Smarter dispatching decisions and finer control over what missions are run.*
-
-  * **Mission Filters:**
-      * **Event Missions:** Toggle to enable/disable processing of event missions (default: enabled).
-      * **Alert Missions:** Toggle to enable/disable (post-)alert missions (default: enabled).
-      * **Distance Caps:** Set maximum dispatch distance for (post-)alert missions.
-      * **Re-open Missions:** Option to force re-opening of missions regardless of their state (default: disabled).
-  * **Smart Dispatching:**
-      * **Dynamic Scaling:** Automatically adjust required vehicles based on water/personnel/patient needs (default: enabled).
-      * **Personnel Availability:** Check if vehicles have enough trained personnel ready before dispatching; disable vehicle if insufficient (default: disabled).
-      * **Alliance Fleet:** Option to "Consider Vehicles from Members" when calculating requirements (default: disabled).
-
-## 🤝 Phase 4: Alliance Collaboration
-
-*Improved sharing logic to support alliance play styles.*
-
-  * **Conditional Sharing:**
-      * **Share on Transport:** Automatically share missions if a patient or prisoner transport is requested.
-      * **Share on Missing:** Automatically share missions if your fleet lacks the required vehicles.
-      * **General Sharing:** Master toggle to share all processed missions.
-
-## ⚙️ Phase 5: Core System Improvements
-
-*Quality of life updates for the bot's operation.*
-
-  * **Game Speed Control:** New setting to adjust the simulation/action speed:
-      * `0`: Pause
-      * `1`: Turbo
-      * `...`
-      * `8`: Extreme Slow
+**Contact:**
+I will update regularly to improve the bot. Please contact me if you need any information about this project:
+**Discord:** pouett123456_98797
