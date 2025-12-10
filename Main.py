@@ -84,7 +84,7 @@ def show_menu():
 
 async def login():
     # --- STARTUP BANNER ---
-    display_message("Prometheus")
+    display_message("Prometheus V3")
     display_info("Created by TheoDev")
     display_info("Inspired by NateSHonor project https://github.com/NatesHonor/MissionchiefBot-X")
 
