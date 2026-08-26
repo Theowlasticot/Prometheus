@@ -5,7 +5,7 @@ import re
 
 from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import VehicleManager
-from data.config_settings import get_server_code
+from data.config_settings import get_server_code, get_server_url, is_alliance_mission_name
 
 # Singleton — dynamic code, cache-aware
 def _create_manager():
@@ -32,21 +32,52 @@ async def check_and_grab_missions(browsers, num_threads):
     first_browser = browsers[0]
     try:
         page = first_browser.contexts[0].pages[0]
-        await page.goto("https://www.missionchief.com")
+        base = get_server_url().rstrip("/")
+        await page.goto(base, timeout=30000)
+        await page.wait_for_load_state("domcontentloaded", timeout=15000)
+        # Handle Lite mode + wait for missions to load
+        try:
+            await page.wait_for_selector('.mission_panel, .mission_panel_red, .mission_panel_yellow', timeout=5000)
+        except Exception:
+            pass
         
-        mission_panels = await page.query_selector_all('.mission_panel_red')
+        # Capture all mission panels (red = own urgent, yellow = shared, alliance, event)
+        selectors = '.mission_panel_red, .mission_panel_yellow, .mission_panel_green, .mission_panel, .mission_alliance, [id^="mission_"]'
+        mission_panels = await page.query_selector_all(selectors)
+        # Deduplicate by id
+        seen = set()
         mission_list = []
         for panel in mission_panels:
             try:
                 m_id_attr = await panel.get_attribute('id')
-                m_type_id = await panel.get_attribute('mission_type_id') 
-                if m_id_attr:
-                    clean_id = m_id_attr.split('_')[-1]
-                    if clean_id.isdigit():
-                        mission_list.append({'id': clean_id, 'type': m_type_id})
+                if not m_id_attr:
+                    continue
+                # Only care about mission_* ids
+                if not m_id_attr.startswith("mission_"):
+                    continue
+                clean_id = m_id_attr.split('_')[-1]
+                if not clean_id.isdigit() or clean_id in seen:
+                    continue
+                seen.add(clean_id)
+                m_type_id = await panel.get_attribute('mission_type_id')
+                mission_list.append({'id': clean_id, 'type': m_type_id})
             except (AttributeError, ValueError) as e:
                 display_error(f"Panel parse error: {e}")
                 continue
+        # Fallback: also check for alliance panels specifically if none found
+        if not mission_list:
+            try:
+                fallback = await page.query_selector_all('[id^="mission_"]')
+                for panel in fallback:
+                    m_id_attr = await panel.get_attribute('id')
+                    if m_id_attr and m_id_attr.startswith("mission_"):
+                        clean_id = m_id_attr.split('_')[-1]
+                        if clean_id.isdigit() and clean_id not in seen:
+                            seen.add(clean_id)
+                            m_type_id = await panel.get_attribute('mission_type_id')
+                            mission_list.append({'id': clean_id, 'type': m_type_id})
+            except Exception:
+                pass
 
         display_info(f"Found {len(mission_list)} missions.")
         mission_data = await split_mission_ids_among_threads(mission_list, browsers, num_threads)
@@ -76,7 +107,9 @@ async def get_on_scene_vehicles(page):
     on_scene_counts = {}
     selectors = [
         '#mission_vehicle_at_mission tr td a[vehicle_type_id]',
-        '#mission_vehicle_driving tr td a[vehicle_type_id]'
+        '#mission_vehicle_driving tr td a[vehicle_type_id]',
+        '#mission_vehicle_staging tr td a[vehicle_type_id]',
+        '#mission_vehicle_on_the_way tr td a[vehicle_type_id]'
     ]
     for selector in selectors:
         try:
@@ -105,7 +138,10 @@ async def gather_mission_info(mission_entries, browser, thread_id):
         
         try:
             display_info(f"Thread {thread_id}: Processing mission {index+1}/{len(mission_entries)} (ID: {mission_id})")
-            await page.goto(f"https://www.missionchief.com/missions/{mission_id}")
+            base = get_server_url().rstrip("/")
+            await page.goto(f"{base}/missions/{mission_id}", timeout=30000)
+            # Be nice to server
+            await asyncio.sleep(0.3)
             
             try:
                 await page.wait_for_selector('#missionH1', timeout=5000)
@@ -149,20 +185,35 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                     if is_transport_alert:
                         continue
 
-                    # Resource Parsing (Legacy Support)
+                    # Resource Parsing (Legacy Support) — i18n: water/eau/wasser, foam/mousse/schaum
                     text_lower = text.lower()
-                    if "water" in text_lower and ("missing" in text_lower or "needed" in text_lower):
-                        match = re.search(r'([\d,]+)\s*(?:l|liters|gal|gallons|water)', text_lower)
+                    water_words = ["water", "eau", "wasser", "liters", "gallons", "gal", "l "]
+                    foam_words = ["foam", "mousse", "schaum", "schuim", "ecume"]
+                    if any(w in text_lower for w in water_words) and any(x in text_lower for x in ["missing", "needed", "benötigt", "manque", "benodigd", "fehl"]):
+                        match = re.search(r'([\d.,]+)\s*(?:l|liters|gal|gallons|water|eau|wasser)', text_lower)
                         if match:
                             try:
-                                water_needed = int(match.group(1).replace(',', ''))
-                            except ValueError: pass
-                    if "foam" in text_lower and ("missing" in text_lower or "needed" in text_lower):
-                        match = re.search(r'([\d,]+)\s*(?:l|liters|gal|gallons|foam)', text_lower)
+                                # Handle 1.500 vs 1,500 vs 1.5
+                                num = match.group(1).replace(',', '').replace('.', '')
+                                # But keep decimal if needed? For water we want int
+                                water_needed = int(re.sub(r'[.,]', '', match.group(1))[:10].replace(',', '').replace('.', '') or 0)
+                                # Simpler fallback
+                                water_needed = int(match.group(1).replace(',', '').replace('.', '').replace(' ', '') or 0)
+                            except ValueError:
+                                try:
+                                    water_needed = int(float(match.group(1).replace(',', '')))
+                                except ValueError:
+                                    pass
+                    if any(w in text_lower for w in foam_words) and any(x in text_lower for x in ["missing", "needed", "benötigt", "manque", "benodigd", "fehl"]):
+                        match = re.search(r'([\d.,]+)\s*(?:l|liters|gal|gallons|foam|mousse|schaum)', text_lower)
                         if match:
                             try:
-                                foam_needed = int(match.group(1).replace(',', ''))
-                            except ValueError: pass
+                                foam_needed = int(match.group(1).replace(',', '').replace('.', '') or 0)
+                            except ValueError:
+                                try:
+                                    foam_needed = int(float(match.group(1).replace(',', '')))
+                                except ValueError:
+                                    pass
 
             except Exception as e:
                 display_error(f"Alert scan error {mission_id}: {e}")
@@ -172,7 +223,10 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 missing_vehicles_div = await page.query_selector('div[data-requirement-type="vehicles"]')
                 if missing_vehicles_div:
                     text = (await missing_vehicles_div.inner_text()).strip().lower()
-                    text = text.replace('missing vehicles:', '').replace('\xa0', ' ').strip()
+                    # i18n: handle "Missing vehicles:", "Fehlende Fahrzeuge:", "Véhicules manquants:" etc — strip up to colon
+                    if ":" in text:
+                        text = text.split(":", 1)[-1]
+                    text = text.replace('\xa0', ' ').strip()
                     
                     vehicle_entries = text.split(',')
                     for entry in vehicle_entries:
@@ -183,13 +237,13 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                                 name = match.group(2).strip().lower()
                                 if name.endswith('s') and not name.endswith('ems') and not name.endswith('ss'): name = name[:-1]
                                 
-                                # Filter Resources
-                                if "water" in name and not any(x in name for x in ["tanker", "rescue", "trailer", "boat"]):
-                                    water_needed = max(water_needed, count)
-                                    continue
-                                if "foam" in name and not any(x in name for x in ["tender", "trailer"]):
-                                    foam_needed = max(foam_needed, count)
-                                    continue
+                            # Filter Resources — i18n
+                            if any(w in name for w in ["water", "wasser", "eau", "liters", "gallons"]) and not any(x in name for x in ["tanker", "rescue", "trailer", "boat", "wassertank", "tank"]):
+                                water_needed = max(water_needed, count)
+                                continue
+                            if any(w in name for w in ["foam", "mousse", "schaum", "schuim"]) and not any(x in name for x in ["tender", "trailer", "anhaenger", "anhänger"]):
+                                foam_needed = max(foam_needed, count)
+                                continue
 
                                 if name == "car to tow":
                                     crashed_cars = count
@@ -291,8 +345,54 @@ async def gather_vehicle_requirements(page):
     vehicle_requirements = []
     credits = 0 
     
-    requirement_table = await page.query_selector('div.col-md-4 > table:has(th:has-text("Vehicle and Personnel Requirements"))')
-    credit_table = await page.query_selector('div.col-md-4 > table:has(th:has-text("Reward and Precondition"))')
+    # Try language-specific headers first, then fallback to generic
+    # US: Vehicle and Personnel Requirements, Reward and Precondition
+    # DE: Fahrzeug- und Personal-Anforderungen, Belohnung und Voraussetzung
+    # FR: Véhicules et personnel requis, etc.
+    th_variants = [
+        "Vehicle and Personnel Requirements", "Fahrzeug", "Personnel Requirements",
+        "Véhicules", "Voertuigen", "Veicoli", "Pojazdy"
+    ]
+    th_reward = [
+        "Reward and Precondition", "Belohnung", "Récompense", "Beloning", "Credits"
+    ]
+    requirement_table = None
+    credit_table = None
+    for th in th_variants:
+        try:
+            sel = f'div.col-md-4 > table:has(th:has-text("{th}"))'
+            requirement_table = await page.query_selector(sel)
+            if requirement_table:
+                break
+        except Exception:
+            continue
+    for th in th_reward:
+        try:
+            sel = f'div.col-md-4 > table:has(th:has-text("{th}"))'
+            credit_table = await page.query_selector(sel)
+            if credit_table:
+                break
+        except Exception:
+            continue
+    # Fallback: try iframe content if not found on main page
+    if not requirement_table:
+        try:
+            iframe = await page.query_selector('#iframe-inside-container')
+            if iframe:
+                # Try to get frame
+                frame = await iframe.content_frame()
+                if frame:
+                    for th in th_variants:
+                        try:
+                            requirement_table = await frame.query_selector(f'table:has(th:has-text("{th}"))')
+                            if requirement_table:
+                                # Use frame for subsequent queries
+                                page = frame
+                                break
+                        except Exception:
+                            continue
+        except Exception:
+            pass
 
     if credit_table:
         rows = await credit_table.query_selector_all('tbody tr')

@@ -267,12 +267,22 @@ async function loadConfig() {
     const scode = cfg.server_settings?.code ?? "us";
     const sel = $("cfg-server-code");
     if (sel) {
-      // if options not loaded yet, set value anyway
       sel.value = scode;
     }
     $("cfg-auto-update").checked = (cfg.server_settings?.auto_update ?? "true").toString().toLowerCase() === "true";
     $("cfg-refresh-interval").value = cfg.server_settings?.refresh_interval ?? 3600;
     $("cfg-cache-dir").textContent = cfg.server_settings?.cache_dir ?? "assets_cache";
+    // transport
+    $("cfg-allow-hosp").checked = (cfg.transport_settings?.allow_alliance_hospitals ?? "true").toString().toLowerCase() === "true";
+    $("cfg-allow-cells").checked = (cfg.transport_settings?.allow_alliance_cells ?? "true").toString().toLowerCase() === "true";
+    $("cfg-max-distance").value = cfg.transport_settings?.max_distance ?? 0;
+    // dispatch
+    $("cfg-min-percent").value = cfg.dispatch_settings?.min_percent ?? 70;
+    $("cfg-use-aar").checked = (cfg.dispatch_settings?.use_aar ?? "false").toString().toLowerCase() === "true";
+    // mission_filter
+    $("cfg-ignore-storm").checked = (cfg.mission_filter?.ignore_storm ?? "false").toString().toLowerCase() === "true";
+    $("cfg-ignore-event").checked = (cfg.mission_filter?.ignore_event ?? "false").toString().toLowerCase() === "true";
+    $("cfg-min-credits").value = cfg.mission_filter?.min_credits ?? 0;
     if (cfg.credentials?.password === "***") {
       $("cfg-password").placeholder = "•••••••• (set)";
     }
@@ -303,6 +313,20 @@ async function saveConfig() {
       code: $("cfg-server-code").value,
       auto_update: $("cfg-auto-update").checked ? "true" : "false",
       refresh_interval: $("cfg-refresh-interval").value
+    },
+    transport_settings: {
+      allow_alliance_hospitals: $("cfg-allow-hosp").checked ? "true" : "false",
+      allow_alliance_cells: $("cfg-allow-cells").checked ? "true" : "false",
+      max_distance: $("cfg-max-distance").value
+    },
+    dispatch_settings: {
+      min_percent: $("cfg-min-percent").value,
+      use_aar: $("cfg-use-aar").checked ? "true" : "false"
+    },
+    mission_filter: {
+      ignore_storm: $("cfg-ignore-storm").checked ? "true" : "false",
+      ignore_event: $("cfg-ignore-event").checked ? "true" : "false",
+      min_credits: $("cfg-min-credits").value
     }
   };
   const u = $("cfg-username").value.trim();

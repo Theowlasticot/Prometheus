@@ -1,7 +1,7 @@
 import asyncio
 import re
-from utils.pretty_print import display_info, display_error
-from data.config_settings import get_hiring_mode
+from utils.pretty_print import display_info, display_error, display_warning
+from data.config_settings import get_hiring_mode, get_server_url
 
 async def manage_personnel(browser):
     hiring_mode = get_hiring_mode()
@@ -12,12 +12,13 @@ async def manage_personnel(browser):
     display_info(f"👥 Starting Personnel Management (Mode: {hiring_mode})...")
     
     page = browser.contexts[0].pages[0]
+    base = get_server_url().rstrip("/")
     
     try:
         # 1. Go to Main Page to get list of buildings
-        if page.url != "https://www.missionchief.com/":
-            await page.goto("https://www.missionchief.com/")
-            await page.wait_for_load_state('networkidle')
+        if not page.url.startswith(base):
+            await page.goto(f"{base}/", timeout=30000)
+            await page.wait_for_load_state('domcontentloaded', timeout=15000)
 
         # Select all buildings from the list
         # Filtering for relevant building types (Fire, Rescue, Police, etc.)
@@ -39,27 +40,55 @@ async def manage_personnel(browser):
         # 2. Iterate through buildings
         for b_id in building_ids:
             try:
-                await page.goto(f"https://www.missionchief.com/buildings/{b_id}")
-                await page.wait_for_load_state('networkidle')
+                await page.goto(f"{base}/buildings/{b_id}", timeout=30000)
+                await page.wait_for_load_state('domcontentloaded', timeout=15000)
                 
-                # Check Personnel Count vs Target
-                # Use locator for :has-text support, fallback to JS evaluation
+                # Check Personnel Count vs Target — i18n (EN/DE/FR/NL)
                 personnel_dd = None
-                try:
-                    loc = page.locator("dl.dl-horizontal dt:has-text('Personnel:') + dd")
-                    if await loc.count() > 0:
-                        personnel_dd = loc.first
-                except Exception:
-                    personnel_dd = None
+                # Try multiple language selectors
+                for sel in [
+                    "dl.dl-horizontal dt:has-text('Personnel:') + dd",
+                    "dl.dl-horizontal dt:has-text('Personal:') + dd",
+                    "dl.dl-horizontal dt:has-text('Personnel') + dd",
+                    "dl.dl-horizontal dt:has-text('Personal') + dd",
+                ]:
+                    try:
+                        loc = page.locator(sel)
+                        if await loc.count() > 0:
+                            personnel_dd = loc.first
+                            break
+                    except Exception:
+                        continue
+                # Fallback: any dd containing Employees/Mitarbeiter
+                if not personnel_dd:
+                    try:
+                        loc = page.locator("dl.dl-horizontal dd")
+                        cnt = await loc.count()
+                        for i in range(cnt):
+                            try:
+                                t = await loc.nth(i).inner_text()
+                                if any(k in t for k in ["Employees", "Mitarbeiter", "Personnel", "Personal"]):
+                                    personnel_dd = loc.nth(i)
+                                    break
+                            except Exception:
+                                continue
+                    except Exception:
+                        personnel_dd = None
                 
                 if personnel_dd:
                     try:
                         text = await personnel_dd.inner_text()
                     except Exception:
                         text = ""
-                    # Parse "27 Employees" and "Target: 300"
-                    current_match = re.search(r'(\d+)\s+Employees', text)
-                    target_match = re.search(r'Target:\s*(\d+)', text)
+                    # i18n: Employees (EN), Mitarbeiter (DE), Employés (FR), Medewerkers (NL)
+                    current_match = re.search(r'(\d+)\s+(Employees|Mitarbeiter|Employés|Medewerkers|Werknemers|Dipendenti)', text, re.IGNORECASE)
+                    if not current_match:
+                        current_match = re.search(r'(\d+)\s+\w+', text)
+                    target_match = re.search(r'Target:\s*(\d+)', text, re.IGNORECASE)
+                    if not target_match:
+                        target_match = re.search(r'Ziel:\s*(\d+)', text, re.IGNORECASE)
+                    if not target_match:
+                        target_match = re.search(r'(\d+)\s*Personnel', text, re.IGNORECASE)
                     
                     if current_match and target_match:
                         try:
@@ -89,16 +118,21 @@ async def manage_personnel(browser):
 
 async def handle_hiring(page, building_id, mode):
     # Navigate to Hire Page
-    # The button is usually "/buildings/{id}/hire"
     try:
-        hire_url = f"https://www.missionchief.com/buildings/{building_id}/hire"
-        # We can also find the button "Hire new people"
-        await page.goto(hire_url)
+        base = get_server_url().rstrip("/")
+        hire_url = f"{base}/buildings/{building_id}/hire"
+        await page.goto(hire_url, timeout=30000)
+        await page.wait_for_load_state('domcontentloaded', timeout=15000)
         
-        # Check if recruitment is already active
-        # HTML: "The recruiting phase still runs for 1 day(s)."
+        # Check if recruitment is already active — i18n (EN/DE/FR)
         content = await page.content()
-        if "The recruiting phase still runs for" in content:
+        active_phrases = [
+            "The recruiting phase still runs for",
+            "Die Einstellungsphase läuft noch",
+            "La phase de recrutement",
+            "De wervingsfase loopt nog",
+        ]
+        if any(p in content for p in active_phrases):
             # Recruitment active, skip
             return
 

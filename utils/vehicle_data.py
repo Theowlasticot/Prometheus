@@ -3,6 +3,7 @@ import json
 import os
 import re
 from utils.pretty_print import display_info, display_error
+from data.config_settings import get_server_url
 
 async def gather_vehicle_data(browsers, num_threads):
     vehicle_ids = []
@@ -11,7 +12,9 @@ async def gather_vehicle_data(browsers, num_threads):
     display_info("Scraping main vehicle list to find IDs...")
     try:
         page = browsers[0].contexts[0].pages[0]
-        await page.goto("https://www.missionchief.com/vehicles")
+        base = get_server_url().rstrip("/")
+        await page.goto(f"{base}/vehicles", timeout=30000)
+        await page.wait_for_selector("tbody tr, .pagination", timeout=10000)
         
         # Determine total pages
         total_pages = 1
@@ -27,7 +30,9 @@ async def gather_vehicle_data(browsers, num_threads):
         display_info(f"Found {total_pages} pages of vehicles.")
 
         for p in range(1, total_pages + 1):
-            if p > 1: await page.goto(f"https://www.missionchief.com/vehicles?page={p}")
+            if p > 1:
+                await page.goto(f"{base}/vehicles?page={p}", timeout=30000)
+                await page.wait_for_selector("tbody tr", timeout=10000)
             
             rows = await page.query_selector_all('tbody tr')
             for row in rows:
@@ -91,7 +96,8 @@ async def process_vehicle_chunk(browser, vehicle_ids, thread_id):
             display_info(f"Thread {thread_id}: Processing {index}/{total}")
             
         try:
-            await page.goto(f"https://www.missionchief.com/vehicles/{v_id}")
+            base = get_server_url().rstrip("/")
+            await page.goto(f"{base}/vehicles/{v_id}", timeout=30000)
             
             type_id = None
             
