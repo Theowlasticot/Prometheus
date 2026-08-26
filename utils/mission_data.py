@@ -3,11 +3,25 @@ import json
 import os
 import re
 
-from utils.pretty_print import display_info, display_error
+from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import VehicleManager
+from data.config_settings import get_server_code
 
-# Singleton Instance
-VEHICLE_MANAGER = VehicleManager(data_folder="us")
+# Singleton — dynamic code, cache-aware
+def _create_manager():
+    try:
+        code = get_server_code()
+    except Exception:
+        code = "us"
+    return VehicleManager(code=code)
+
+VEHICLE_MANAGER = _create_manager()
+
+def reload_vehicle_manager():
+    global VEHICLE_MANAGER
+    VEHICLE_MANAGER = _create_manager()
+    display_info(f"Mission VehicleManager reloaded for code={VEHICLE_MANAGER.code}")
+    return VEHICLE_MANAGER
 
 NON_VEHICLE_KEYWORDS = [
     'water', 'liters', 'gallons', 'foam', 'mousse', 'eau',

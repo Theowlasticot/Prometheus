@@ -14,9 +14,7 @@
       theme: {
         extend: {
           fontFamily: { sans: ['Inter','system-ui'], mono: ['JetBrains Mono','monospace'] },
-          colors: {
-            prometheus: { 900:'#0f172a', 800:'#1e293b', 700:'#334155' }
-          }
+          colors: { prometheus: { 900:'#0f172a', 800:'#1e293b', 700:'#334155' } }
         }
       }
     }
@@ -30,13 +28,11 @@
   </style>
 </head>
 <body class="bg-[#020617] text-slate-100 min-h-screen font-sans antialiased selection:bg-amber-500/30">
-  <!-- Glow -->
   <div class="fixed inset-0 pointer-events-none">
     <div class="absolute -top-40 -right-40 w-[700px] h-[700px] bg-amber-500/10 blur-[120px] rounded-full"></div>
     <div class="absolute top-1/2 -left-40 w-[600px] h-[600px] bg-sky-500/8 blur-[120px] rounded-full"></div>
   </div>
 
-  <!-- Header -->
   <header class="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950/70 glass">
     <div class="max-w-[1280px] mx-auto px-6 py-4 flex items-center justify-between">
       <div class="flex items-center gap-4">
@@ -45,7 +41,7 @@
         </div>
         <div>
           <h1 class="font-semibold tracking-tight text-[15px] leading-none">Prometheus <span class="text-amber-400 font-mono text-xs">V3</span></h1>
-          <p class="text-[11px] text-slate-400 font-mono tracking-widest uppercase">MissionChief — US Server</p>
+          <p id="header-subtitle" class="text-[11px] text-slate-400 font-mono tracking-widest uppercase">MissionChief — us Server</p>
         </div>
         <span class="hidden md:inline-flex ml-3 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-medium">● Live</span>
       </div>
@@ -61,14 +57,12 @@
   </header>
 
   <main class="relative max-w-[1280px] mx-auto px-6 py-6">
-    <!-- Tabs -->
     <div class="flex items-center gap-1 p-1 w-fit rounded-xl bg-slate-900 border border-slate-800 mb-6">
       <button data-tab="stats" class="tab-btn px-4 py-1.5 rounded-lg bg-slate-800 text-white text-sm font-medium shadow">Stats</button>
       <button data-tab="missions" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Missions</button>
       <button data-tab="config" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Config & Settings</button>
     </div>
 
-    <!-- KPI GRID -->
     <section id="panel-stats" class="tab-panel">
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <div class="kpi-card rounded-2xl border border-slate-800 p-4 shadow-xl">
@@ -99,9 +93,7 @@
             <h3 class="text-sm font-semibold">Activity (last 20 polls)</h3>
             <span class="text-[11px] font-mono text-slate-500">auto-refresh 5s</span>
           </div>
-          <div class="h-[220px]">
-            <canvas id="sparkline"></canvas>
-          </div>
+          <div class="h-[220px]"><canvas id="sparkline"></canvas></div>
         </div>
         <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
           <h3 class="text-sm font-semibold mb-3">System</h3>
@@ -111,17 +103,30 @@
             <div class="flex justify-between"><span class="text-slate-400">Missions delay</span><span id="sys-missions" class="font-mono">—</span></div>
             <div class="flex justify-between"><span class="text-slate-400">Transport delay</span><span id="sys-transport" class="font-mono">—</span></div>
             <div class="flex justify-between"><span class="text-slate-400">Personnel check</span><span id="sys-personnel" class="font-mono">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Server</span><span id="sys-server" class="font-mono text-amber-300">—</span></div>
             <div class="pt-3 border-t border-slate-800">
               <p class="text-[11px] font-mono text-slate-500">Files</p>
               <p class="text-xs font-mono text-slate-400">missions: <span id="file-mission">—</span></p>
               <p class="text-xs font-mono text-slate-400">vehicles: <span id="file-vehicle">—</span></p>
+              <p class="text-xs font-mono text-slate-400">assets: <span id="file-assets">—</span></p>
             </div>
           </div>
         </div>
       </div>
+
+      <div class="mt-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+        <h3 class="text-sm font-semibold mb-2">Assets Cache</h3>
+        <div class="grid grid-cols-3 gap-3 text-xs font-mono">
+          <div>Code: <span id="asset-code" class="text-amber-300">—</span></div>
+          <div>Cached: <span id="asset-cached">—</span> files</div>
+          <div>Expected: <span id="asset-expected">—</span></div>
+          <div>Last sync: <span id="asset-sync" class="text-slate-400">—</span></div>
+          <div>Manifest: <span id="asset-etag">—</span></div>
+          <div>Has Vehicle: <span id="asset-vehicle">—</span></div>
+        </div>
+      </div>
     </section>
 
-    <!-- Missions Panel -->
     <section id="panel-missions" class="tab-panel hidden">
       <div class="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
         <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
@@ -140,81 +145,87 @@
       </div>
     </section>
 
-    <!-- Config Panel -->
     <section id="panel-config" class="tab-panel hidden">
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div class="lg:col-span-2 space-y-4">
-          <!-- Browser -->
+          <!-- Server / Region — NEW -->
+          <div class="rounded-2xl border border-amber-500/30 bg-slate-900/70 p-5 ring-1 ring-amber-500/10">
+            <h3 class="text-sm font-semibold mb-1">Server / Region <span class="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/20">smart fetch</span></h3>
+            <p class="text-xs text-slate-500 mb-4">Choose location — dashboard checks git manifest (304 = no changes) and downloads only the concerned region via md5 diff. No re-download if unchanged.</p>
+            <div class="grid grid-cols-2 gap-4">
+              <label class="flex flex-col gap-1.5">
+                <span class="text-xs font-medium text-slate-400">Region code (19 servers)</span>
+                <select id="cfg-server-code" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono">
+                  <option value="us">us — missionchief.com (US)</option>
+                </select>
+                <span class="text-[11px] text-slate-500">Switching saves to <code>config.ini:server_settings.code</code></span>
+              </label>
+              <label class="flex flex-col gap-1.5">
+                <span class="text-xs font-medium text-slate-400">Refresh interval (s)</span>
+                <input id="cfg-refresh-interval" type="number" min="600" max="86400" step="300" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" />
+                <span class="text-[11px] text-slate-500">Background check every N seconds</span>
+              </label>
+            </div>
+            <div class="grid grid-cols-2 gap-4 mt-4">
+              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3">
+                <div><p class="text-sm font-medium">Auto-update</p><p class="text-xs text-slate-500">Fetch on dashboard & bot loops</p></div>
+                <input id="cfg-auto-update" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-amber-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" />
+              </label>
+              <div class="bg-slate-950 border border-slate-800 rounded-xl px-4 py-3">
+                <p class="text-xs font-medium text-slate-400">Cache dir</p>
+                <p id="cfg-cache-dir" class="text-xs font-mono text-slate-300">assets_cache</p>
+                <p class="text-[11px] text-slate-500">Relative to project root</p>
+              </div>
+            </div>
+            <div class="mt-4 rounded-xl bg-slate-950 border border-slate-800 p-4">
+              <div class="flex items-center justify-between mb-2">
+                <h4 class="text-xs font-semibold tracking-widest uppercase font-mono text-slate-400">Assets Status</h4>
+                <span id="asset-badge" class="px-2 py-1 rounded-full bg-slate-800 text-[11px] font-mono">—</span>
+              </div>
+              <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+                <div>Cached files: <span id="cfg-asset-cached" class="text-white">—</span> <span id="cfg-asset-expected" class="text-slate-500">/ —</span></div>
+                <div>Vehicle map: <span id="cfg-asset-vehicle">—</span></div>
+                <div>Manifest etag: <span id="cfg-asset-etag" class="text-slate-400">—</span></div>
+                <div>Last sync: <span id="cfg-asset-sync">—</span></div>
+              </div>
+              <p id="asset-msg" class="text-xs text-slate-400 mt-2">—</p>
+              <div class="flex gap-2 mt-3">
+                <button onclick="checkAssets()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-medium">Check (git diff)</button>
+                <button onclick="syncAssets()" class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-semibold">Download / Sync region</button>
+                <span id="asset-status" class="text-xs font-mono self-center text-slate-400"></span>
+              </div>
+              <p class="text-[11px] text-slate-500 mt-2">Smart: uses <code>If-None-Match</code> + md5 — no download if remote unchanged, only concerned region.</p>
+            </div>
+          </div>
+
           <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
             <h3 class="text-sm font-semibold mb-4">Browser Settings</h3>
             <div class="grid grid-cols-2 gap-4">
-              <label class="flex flex-col gap-1.5">
-                <span class="text-xs font-medium text-slate-400">Headless</span>
-                <select id="cfg-headless" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm">
-                  <option value="true">true — hidden (recommended)</option>
-                  <option value="false">false — visible</option>
-                </select>
-              </label>
-              <label class="flex flex-col gap-1.5">
-                <span class="text-xs font-medium text-slate-400">Browsers (1–8)</span>
-                <input id="cfg-browsers" type="number" min="1" max="8" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" />
-              </label>
+              <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Headless</span><select id="cfg-headless" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm"><option value="true">true — hidden (recommended)</option><option value="false">false — visible</option></select></label>
+              <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Browsers (1–8)</span><input id="cfg-browsers" type="number" min="1" max="8" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" /></label>
             </div>
           </div>
 
-          <!-- Delays -->
           <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
             <h3 class="text-sm font-semibold mb-4">Delays <span class="text-xs font-normal text-slate-500">(seconds)</span></h3>
             <div class="grid grid-cols-3 gap-4">
-              <label class="flex flex-col gap-1.5">
-                <span class="text-xs font-medium text-slate-400">Missions</span>
-                <input id="cfg-missions" type="number" min="3" max="300" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" />
-              </label>
-              <label class="flex flex-col gap-1.5">
-                <span class="text-xs font-medium text-slate-400">Transport</span>
-                <input id="cfg-transport" type="number" min="5" max="600" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" />
-              </label>
-              <label class="flex flex-col gap-1.5">
-                <span class="text-xs font-medium text-slate-400">Personnel check</span>
-                <input id="cfg-personnel-check" type="number" min="600" max="86400" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" />
-              </label>
+              <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Missions</span><input id="cfg-missions" type="number" min="3" max="300" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" /></label>
+              <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Transport</span><input id="cfg-transport" type="number" min="5" max="600" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" /></label>
+              <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Personnel check</span><input id="cfg-personnel-check" type="number" min="600" max="86400" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" /></label>
             </div>
           </div>
 
-          <!-- Personnel -->
           <div class="rounded-2xl border border-amber-500/20 bg-slate-900/60 p-5 ring-1 ring-amber-500/10">
-            <h3 class="text-sm font-semibold mb-1">Personnel Settings <span class="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/20">kept as requested</span></h3>
+            <h3 class="text-sm font-semibold mb-1">Personnel Settings <span class="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/20">kept</span></h3>
             <p class="text-xs text-slate-500 mb-4">0 Disabled · 1/2/3 days · -1 Automatic (Premium)</p>
-            <label class="flex flex-col gap-1.5 max-w-xs">
-              <span class="text-xs font-medium text-slate-400">Hiring mode</span>
-              <select id="cfg-hiring" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono">
-                <option value="0">0 — Disabled</option>
-                <option value="1">1 — 1 day</option>
-                <option value="2">2 — 2 days</option>
-                <option value="3">3 — 3 days</option>
-                <option value="-1">-1 — Automatic (Premium)</option>
-              </select>
-            </label>
+            <label class="flex flex-col gap-1.5 max-w-xs"><span class="text-xs font-medium text-slate-400">Hiring mode</span><select id="cfg-hiring" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono"><option value="0">0 — Disabled</option><option value="1">1 — 1 day</option><option value="2">2 — 2 days</option><option value="3">3 — 3 days</option><option value="-1">-1 — Automatic (Premium)</option></select></label>
           </div>
 
-          <!-- Alliance -->
           <div class="rounded-2xl border border-sky-500/20 bg-slate-900/60 p-5 ring-1 ring-sky-500/10">
-            <h3 class="text-sm font-semibold mb-1">Mission / Alliance <span class="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/20">kept as requested</span></h3>
+            <h3 class="text-sm font-semibold mb-1">Mission / Alliance <span class="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/20">kept</span></h3>
             <div class="grid grid-cols-2 gap-4 mt-4">
-              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3">
-                <div>
-                  <p class="text-sm font-medium">Share alliance</p>
-                  <p class="text-xs text-slate-500">Auto-share missions</p>
-                </div>
-                <input id="cfg-share" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-sky-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" />
-              </label>
-              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3">
-                <div>
-                  <p class="text-sm font-medium">Process alliance</p>
-                  <p class="text-xs text-slate-500">Include alliance missions</p>
-                </div>
-                <input id="cfg-process" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-sky-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" />
-              </label>
+              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3"><div><p class="text-sm font-medium">Share alliance</p><p class="text-xs text-slate-500">Auto-share missions</p></div><input id="cfg-share" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-sky-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" /></label>
+              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3"><div><p class="text-sm font-medium">Process alliance</p><p class="text-xs text-slate-500">Include alliance missions</p></div><input id="cfg-process" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-sky-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" /></label>
             </div>
           </div>
 
@@ -223,25 +234,17 @@
             <button onclick="loadConfig()" class="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm font-medium transition">Reload</button>
             <span id="save-status" class="text-sm text-slate-400 self-center font-mono"></span>
           </div>
-          <p class="text-[11px] text-slate-500 font-mono">Writes to <code>config.ini</code> via <code>PUT /api/config</code>. Credentials section is never overwritten unless you edit below.</p>
+          <p class="text-[11px] text-slate-500 font-mono">Writes to <code>config.ini</code> via <code>PUT /api/config</code>. All sections editable, no token — local only.</p>
         </div>
 
-        <!-- Credentials & Help -->
         <div class="space-y-4">
           <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
             <h3 class="text-sm font-semibold mb-4">Credentials</h3>
-            <p class="text-xs text-slate-500 mb-3">Leave empty to keep current. Password is not echoed back by API for file reads — type to change.</p>
-            <label class="flex flex-col gap-1.5 mb-3">
-              <span class="text-xs font-medium text-slate-400">Username (email)</span>
-              <input id="cfg-username" placeholder="user@example.com" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono placeholder:text-slate-600" />
-            </label>
-            <label class="flex flex-col gap-1.5">
-              <span class="text-xs font-medium text-slate-400">Password</span>
-              <input id="cfg-password" type="password" placeholder="••••••••" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono placeholder:text-slate-600" />
-            </label>
-            <p class="text-[11px] text-amber-300/80 mt-3">⚠ Stored plaintext in <code>config.ini</code> — keep <code>.gitignore</code> on it.</p>
+            <p class="text-xs text-slate-500 mb-3">Password redacted as <code>***</code>. Leave empty to keep, or type new to change.</p>
+            <label class="flex flex-col gap-1.5 mb-3"><span class="text-xs font-medium text-slate-400">Username (email)</span><input id="cfg-username" placeholder="user@example.com" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono placeholder:text-slate-600" /></label>
+            <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Password</span><input id="cfg-password" type="password" placeholder="••••••••" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono placeholder:text-slate-600" /></label>
+            <p class="text-[11px] text-amber-300/80 mt-3">⚠ Stored plaintext in <code>config.ini</code> — local only.</p>
           </div>
-
           <div class="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950 p-5">
             <h4 class="text-sm font-semibold">How to run</h4>
             <pre class="mt-2 bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-300 overflow-auto">python Main.py
@@ -249,7 +252,7 @@
 
 # dashboard (separate terminal)
 uvicorn dashboard.app:app --host 127.0.0.1 --port 8000 --reload</pre>
-            <p class="text-xs text-slate-500 mt-2">Dashboard reads <code>data/mission_data.json</code> & <code>data/vehicle_data.json</code> live. No deployment needed — local only.</p>
+            <p class="text-xs text-slate-500 mt-2">Dashboard manages assets: select region → Check → Download. Smart md5 diff, only concerned region.</p>
           </div>
         </div>
       </div>
@@ -259,7 +262,6 @@ uvicorn dashboard.app:app --host 127.0.0.1 --port 8000 --reload</pre>
   </main>
 
   <div id="toast" class="fixed bottom-4 right-4 hidden px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-sm shadow-xl"></div>
-
   <script src="/static/app.js"></script>
 </body>
 </html>

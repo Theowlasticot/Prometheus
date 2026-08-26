@@ -2,17 +2,49 @@ import json
 import os
 import glob
 import re
-from utils.pretty_print import display_error
+from pathlib import Path
+from utils.pretty_print import display_error, display_warning
 
 class VehicleManager:
-    def __init__(self, data_folder="us"):
-        # Resolve relative to project root (utils/ -> project) to avoid CWD bugs
-        if not os.path.isabs(data_folder):
-            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            candidate = os.path.join(base, data_folder)
-            if os.path.exists(candidate):
+    def __init__(self, data_folder=None, code=None):
+        # Dynamic code + cache resolution: prefers assets_cache/{code}, falls back to bundled us/
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if code is None:
+            try:
+                from data.config_settings import get_server_code
+                code = get_server_code()
+            except Exception:
+                code = "us"
+        code = (code or "us").lower()
+        if data_folder is None:
+            # Prefer remote cache if present
+            try:
+                from data.config_settings import get_server_cache_dir
+                cache_dir = get_server_cache_dir()
+            except Exception:
+                cache_dir = "assets_cache"
+            candidate = os.path.join(base, cache_dir, code)
+            has_mscv = False
+            if os.path.isdir(candidate):
+                try:
+                    has_mscv = any(f.endswith(".mscv") for f in os.listdir(candidate))
+                except Exception:
+                    has_mscv = False
+            if has_mscv:
                 data_folder = candidate
+            else:
+                if code == "us":
+                    data_folder = os.path.join(base, "us")
+                else:
+                    data_folder = candidate
+        else:
+            # Explicit folder provided — resolve relative to base
+            if not os.path.isabs(data_folder):
+                candidate = os.path.join(base, data_folder)
+                if os.path.exists(candidate):
+                    data_folder = candidate
         self.data_folder = data_folder
+        self.code = code
         self.index = {}          # Map: Simple Name -> List of System IDs
         self.regex_rules = []    # List of {regex: compiled_re, id: system_id}
         self.vehicle_properties = {} # Map: System ID -> {extend: dict, is_matchless: bool}
@@ -38,6 +70,19 @@ class VehicleManager:
         return pattern
 
     def load_database(self):
+        if not os.path.isdir(self.data_folder):
+            display_warning(f"Vehicle data folder missing: {self.data_folder} (code={self.code}) — will be empty until dashboard sync")
+            # Fallback to bundled us if non-us cache empty
+            if self.code != "us":
+                base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                fallback = os.path.join(base, "us")
+                if os.path.isdir(fallback):
+                    display_warning(f"Falling back to bundled us/ for code {self.code} until sync")
+                    self.data_folder = fallback
+                else:
+                    return
+            else:
+                return
         # Keywords to detect capabilities in ANY language (for future updates uWu)
         KEYWORD_MAP = {
             "FOAM": ["foam", "mousse", "schaum", "schuim", "écume"],

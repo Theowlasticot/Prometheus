@@ -9,9 +9,39 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+try:
+    from utils.remote_vehicle_store import get_asset_status, check_remote_changes, sync_code, get_server_list, get_cache_root
+    HAS_REMOTE = True
+except Exception:
+    HAS_REMOTE = False
+    get_asset_status = check_remote_changes = sync_code = get_server_list = get_cache_root = None
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config.ini"
 DATA_DIR = PROJECT_ROOT / "data"
+
+# Fallback server list (19 codes) if remote cache missing — matches Server.json
+FALLBACK_SERVERS = [
+    {"code":"us","url":"https://www.missionchief.com/"},
+    {"code":"uk","url":"https://www.missionchief.co.uk/"},
+    {"code":"de","url":"https://www.leitstellenspiel.de/"},
+    {"code":"fr","url":"https://www.operateur112.fr/"},
+    {"code":"nl","url":"https://www.meldkamerspel.com/"},
+    {"code":"au","url":"https://www.missionchief-australia.com/"},
+    {"code":"cz","url":"https://www.operacni-stredisko.cz/"},
+    {"code":"dk","url":"https://www.alarmcentral-spil.dk/"},
+    {"code":"fi","url":"https://www.hatakeskuspeli.com/"},
+    {"code":"it","url":"https://www.operatore112.it/"},
+    {"code":"pl","url":"https://www.operatorratunkowy.pl/"},
+    {"code":"pt","url":"https://www.jogo-operador112.com/"},
+    {"code":"se","url":"https://www.larmcentralen-spelet.se/"},
+    {"code":"no","url":"https://www.nodsentralspillet.com/"},
+    {"code":"kr","url":"https://www.missionchief-korea.com/"},
+    {"code":"es","url":"https://www.centro-de-mando.es/"},
+    {"code":"jp","url":"https://www.missionchief-japan.com/"},
+    {"code":"ro","url":"https://www.jocdispecerat112.com/"},
+    {"code":"ru","url":"https://www.dispetcher112.ru/"},
+]
 
 app = FastAPI(title="Prometheus Dashboard", version="3.1.0", docs_url="/api/docs", redoc_url="/api/redoc")
 
@@ -22,21 +52,26 @@ templates = Jinja2Templates(directory=str(PROJECT_ROOT / "dashboard" / "template
 # In-memory stats history for sparkline (keeps last 20 points)
 _stats_history = {"credits": [], "missions": []}
 
-def _read_config_dict() -> Dict[str, Any]:
+def _read_config_dict(redact: bool = False) -> Dict[str, Any]:
     cfg = configparser.ConfigParser()
     cfg.read(CONFIG_PATH, encoding="utf-8")
     out = {}
     for section in cfg.sections():
         out[section] = dict(cfg[section])
-    # Coerce known booleans/ints for UI
+    # Coerce known sections for UI
     try:
         out.setdefault("browser_settings", {})
         out.setdefault("delays", {})
         out.setdefault("personnel_settings", {})
         out.setdefault("mission_settings", {})
         out.setdefault("credentials", {})
+        out.setdefault("server_settings", {})
     except Exception:
         pass
+    if redact and "credentials" in out and "password" in out["credentials"]:
+        # Never leak password — return empty if set
+        pw = out["credentials"]["password"]
+        out["credentials"]["password"] = "***" if pw else ""
     return out
 
 def _write_config_dict(updates: Dict[str, Any]):
@@ -159,9 +194,7 @@ def _get_stats() -> Dict[str, Any]:
     vehicle_types = len(vehicle_data) if isinstance(vehicle_data, dict) else 0
     total_vehicles = sum(len(v) for v in vehicle_data.values()) if isinstance(vehicle_data, dict) else 0
 
-    # Config snapshot
-    cfg = _load_json(CONFIG_PATH)  # not json, fallback
-    # Use configparser for actual values
+    # Config snapshot (redacted read but we need raw for stats)
     cfg_dict = _read_config_dict()
     hiring_mode = cfg_dict.get("personnel_settings", {}).get("hiring_mode", "0")
     share_alliance = cfg_dict.get("mission_settings", {}).get("share_alliance", "true")
@@ -171,6 +204,9 @@ def _get_stats() -> Dict[str, Any]:
     missions_delay = cfg_dict.get("delays", {}).get("missions", "10")
     transport_delay = cfg_dict.get("delays", {}).get("transport", "60")
     personnel_check = cfg_dict.get("delays", {}).get("personnel_check", "3600")
+    server_code = cfg_dict.get("server_settings", {}).get("code", "us")
+    server_auto = cfg_dict.get("server_settings", {}).get("auto_update", "true")
+    server_interval = cfg_dict.get("server_settings", {}).get("refresh_interval", "3600")
 
     # File mtimes
     def mtime(p: Path):
@@ -189,6 +225,16 @@ def _get_stats() -> Dict[str, Any]:
     # Success rate heuristic: missions with vehicles vs total
     # Since we don't have processed count, estimate from credits
     avg_credits = round(total_credits / max(total_missions, 1), 1) if total_missions else 0
+
+    # Asset status for current code
+    asset_status = None
+    if HAS_REMOTE:
+        try:
+            from data.config_settings import get_server_cache_dir
+            cache_dir = get_server_cache_dir()
+            asset_status = get_asset_status(server_code, cache_dir)
+        except Exception:
+            asset_status = {"code": server_code, "error": "status failed"}
 
     return {
         "kpis": {
@@ -210,6 +256,9 @@ def _get_stats() -> Dict[str, Any]:
             "missions_delay": missions_delay,
             "transport_delay": transport_delay,
             "personnel_check": personnel_check,
+            "server_code": server_code,
+            "server_auto": str(server_auto).lower() == "true",
+            "server_interval": server_interval,
         },
         "files": {
             "mission_data_mtime": mtime(mission_path),
@@ -217,6 +266,7 @@ def _get_stats() -> Dict[str, Any]:
         },
         "history": _stats_history,
         "missions": mission_data if total_missions < 200 else {k: mission_data[k] for k in list(mission_data)[:200]},
+        "assets": asset_status,
     }
 
 @app.get("/", response_class=HTMLResponse)
@@ -238,7 +288,8 @@ async def api_stats():
 @app.get("/api/config")
 async def api_get_config():
     try:
-        return JSONResponse(_read_config_dict())
+        # Redact password never leak
+        return JSONResponse(_read_config_dict(redact=True))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -249,10 +300,17 @@ async def api_put_config(request: Request):
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="Expected JSON object")
         # Validate allowed sections
-        allowed_sections = {"credentials", "browser_settings", "personnel_settings", "delays", "mission_settings"}
+        allowed_sections = {"credentials", "browser_settings", "personnel_settings", "delays", "mission_settings", "server_settings"}
         for sec in body.keys():
             if sec not in allowed_sections:
                 raise HTTPException(status_code=400, detail=f"Unknown section: {sec}")
+        # If password is "***" (redacted placeholder) treat as no-change
+        if "credentials" in body and "password" in body["credentials"]:
+            pw = body["credentials"]["password"]
+            if pw == "***":
+                del body["credentials"]["password"]
+                if not body["credentials"]:
+                    del body["credentials"]
         # Validate specific fields
         if "browser_settings" in body:
             bs = body["browser_settings"]
@@ -283,9 +341,49 @@ async def api_put_config(request: Request):
                     v = str(ms[k]).lower()
                     if v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
                         raise HTTPException(status_code=400, detail=f"{k} must be boolean")
-        # Redact credentials from logging? Keep but don't echo password in response fully
+        if "delays" in body:
+            for k in ("missions", "transport", "personnel_check"):
+                if k in body["delays"]:
+                    try:
+                        v = int(body["delays"][k])
+                        if k == "personnel_check":
+                            if v < 600 or v > 86400:
+                                raise HTTPException(status_code=400, detail="personnel_check must be 600-86400")
+                        elif k == "missions":
+                            if v < 3 or v > 300:
+                                raise HTTPException(status_code=400, detail="missions must be 3-300")
+                        elif k == "transport":
+                            if v < 5 or v > 600:
+                                raise HTTPException(status_code=400, detail="transport must be 5-600")
+                    except ValueError:
+                        raise HTTPException(status_code=400, detail=f"{k} must be integer")
+        if "server_settings" in body:
+            ss = body["server_settings"]
+            if "code" in ss:
+                c = str(ss["code"]).lower().strip()
+                valid = {s["code"] for s in FALLBACK_SERVERS}
+                if c not in valid:
+                    raise HTTPException(status_code=400, detail=f"code must be one of {', '.join(sorted(valid))}")
+            if "auto_update" in ss:
+                v = str(ss["auto_update"]).lower()
+                if v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+                    raise HTTPException(status_code=400, detail="auto_update must be boolean")
+            if "refresh_interval" in ss:
+                try:
+                    v = int(ss["refresh_interval"])
+                    if v < 600 or v > 86400:
+                        raise HTTPException(status_code=400, detail="refresh_interval must be 600-86400")
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="refresh_interval must be integer")
+            if "cache_dir" in ss:
+                cd = str(ss["cache_dir"]).strip()
+                if not cd or "/" in cd or "\\" in cd or ".." in cd:
+                    # allow simple dirname like assets_cache or data/cache — but prevent traversal
+                    if ".." in cd or cd.startswith("/"):
+                        raise HTTPException(status_code=400, detail="cache_dir invalid")
         _write_config_dict(body)
-        return JSONResponse({"status": "ok", "config": _read_config_dict()})
+        # If server code changed, hint to sync — don't auto-sync here, UI will call sync
+        return JSONResponse({"status": "ok", "config": _read_config_dict(redact=True)})
     except HTTPException:
         raise
     except Exception as e:
@@ -311,3 +409,118 @@ async def api_vehicles():
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "version": "3.1.0"}
+
+@app.get("/api/servers")
+async def api_servers():
+    try:
+        servers = None
+        if HAS_REMOTE:
+            # Try cache first
+            try:
+                from data.config_settings import get_server_cache_dir
+                cache_dir = get_server_cache_dir()
+                lst = get_server_list(cache_dir)
+                if lst:
+                    servers = lst
+            except Exception:
+                servers = None
+        if not servers:
+            servers = FALLBACK_SERVERS
+        # Enrich with current code
+        try:
+            from data.config_settings import get_server_code
+            cur = get_server_code()
+        except Exception:
+            cur = "us"
+        return JSONResponse({"servers": servers, "current": cur, "count": len(servers)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/assets/status")
+async def api_assets_status():
+    try:
+        if not HAS_REMOTE:
+            return JSONResponse({"error": "remote module missing (httpx not installed)", "code": "us"})
+        from data.config_settings import get_server_code, get_server_cache_dir
+        code = get_server_code()
+        cache_dir = get_server_cache_dir()
+        status = get_asset_status(code, cache_dir)
+        # Also check if manifest etag suggests update?
+        return JSONResponse(status)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/assets/check")
+async def api_assets_check():
+    try:
+        if not HAS_REMOTE:
+            raise HTTPException(status_code=500, detail="httpx not installed")
+        from data.config_settings import get_manifest_url, get_server_cache_dir, get_server_code
+        manifest_url = get_manifest_url()
+        cache_dir = get_server_cache_dir()
+        code = get_server_code()
+        # Check remote changes generically
+        res = check_remote_changes(manifest_url, cache_dir)
+        # Also status for current code
+        status = get_asset_status(code, cache_dir)
+        res["code"] = code
+        res["cached_files"] = status.get("cached_files")
+        res["expected"] = status.get("expected")
+        return JSONResponse(res)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/assets/sync")
+async def api_assets_sync(request: Request):
+    try:
+        if not HAS_REMOTE:
+            raise HTTPException(status_code=500, detail="httpx not installed — pip install httpx")
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        # code can be passed explicitly or use config
+        code = None
+        if isinstance(body, dict):
+            code = body.get("code")
+        if not code:
+            from data.config_settings import get_server_code
+            code = get_server_code()
+        code = str(code).lower().strip()
+        # Validate code
+        valid = {s["code"] for s in FALLBACK_SERVERS}
+        if code not in valid:
+            raise HTTPException(status_code=400, detail=f"Unknown code {code}")
+        from data.config_settings import get_server_cache_dir, get_manifest_url, get_server_manifest_url
+        cache_dir = get_server_cache_dir()
+        manifest_url = get_manifest_url()
+        server_manifest_url = get_server_manifest_url()
+        # Optional: if body contains code and auto_update, also save code to config
+        if isinstance(body, dict) and "code" in body:
+            # Persist selection smartly — only if different
+            from data.config_settings import get_server_code as gsc
+            cur = gsc()
+            if cur != code:
+                _write_config_dict({"server_settings": {"code": code}})
+        result = sync_code(code, cache_dir, manifest_url, server_manifest_url)
+        # After sync, reload VehicleManagers
+        try:
+            import utils.dispatcher as disp
+            import utils.mission_data as md
+            if hasattr(disp, "reload_vehicle_manager"):
+                disp.reload_vehicle_manager()
+            if hasattr(md, "reload_vehicle_manager"):
+                md.reload_vehicle_manager()
+        except Exception as e:
+            result["reload_warning"] = str(e)
+        if "error" in result and result.get("fetched", 0) == 0:
+            # still return 200 but with error field
+            return JSONResponse(result)
+        return JSONResponse(result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
