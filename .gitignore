@@ -24,6 +24,9 @@ coverage.xml
 data/vehicle_data.json
 data/mission_data.json
 data/*.tmp
+assets_cache/
+assets_cache/*.json
+assets_cache/*/*.mscv
 *.tmp
 .opencode_test
 .idea/

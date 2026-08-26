@@ -4,10 +4,23 @@ import os
 
 from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import VehicleManager
-from data.config_settings import get_share_alliance, get_process_alliance
+from data.config_settings import get_share_alliance, get_process_alliance, get_server_code
 
-# Resolved via VehicleManager absolute-path logic; "us" will auto-resolve to project_root/us
-VEHICLE_MANAGER = VehicleManager(data_folder="us")
+# Dynamic manager — code from config, cache-aware (assets_cache/{code} or bundled us)
+def _create_manager():
+    try:
+        code = get_server_code()
+    except Exception:
+        code = "us"
+    return VehicleManager(code=code)
+
+VEHICLE_MANAGER = _create_manager()
+
+def reload_vehicle_manager():
+    global VEHICLE_MANAGER
+    VEHICLE_MANAGER = _create_manager()
+    display_info(f"VehicleManager reloaded for code={VEHICLE_MANAGER.code} from {VEHICLE_MANAGER.data_folder}")
+    return VEHICLE_MANAGER
 VEHICLE_DATA_CACHE = None
 USER_TO_SYSTEM_MAP = {} 
 

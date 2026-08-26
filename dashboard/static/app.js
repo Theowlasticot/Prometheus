@@ -11,7 +11,7 @@ function toast(msg, ok = true) {
   el.textContent = msg;
   el.className = `fixed bottom-4 right-4 px-4 py-2.5 rounded-xl border text-sm shadow-xl ${ok ? "bg-emerald-900/80 border-emerald-700 text-emerald-100" : "bg-red-900/80 border-red-700 text-red-100"}`;
   el.classList.remove("hidden");
-  setTimeout(() => el.classList.add("hidden"), 3000);
+  setTimeout(() => el.classList.add("hidden"), 4000);
 }
 
 async function fetchStats() {
@@ -21,6 +21,7 @@ async function fetchStats() {
     const j = await r.json();
     renderStats(j);
     renderMissions(j.missions || {});
+    updateAssetFromStats(j.assets);
     $("last-update").textContent = new Date().toLocaleTimeString();
     $("health-dot").className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
   } catch (e) {
@@ -53,13 +54,45 @@ function renderStats(j) {
   $("sys-missions").textContent = (c.missions_delay ?? "—") + "s";
   $("sys-transport").textContent = (c.transport_delay ?? "—") + "s";
   $("sys-personnel").textContent = (c.personnel_check ?? "—") + "s";
-
+  const sc = c.server_code || "us";
+  $("sys-server").textContent = sc;
+  $("header-subtitle").textContent = `MissionChief — ${sc.toUpperCase()} Server`;
   $("file-mission").textContent = fmtTime(j.files?.mission_data_mtime);
   $("file-vehicle").textContent = fmtTime(j.files?.vehicle_data_mtime);
+  const assets = j.assets;
+  if (assets) {
+    $("file-assets").textContent = `${assets.cached_files ?? 0}${assets.expected ? "/"+assets.expected : ""} (${sc})`;
+    $("asset-code").textContent = assets.code || sc;
+    $("asset-cached").textContent = assets.cached_files ?? 0;
+    $("asset-expected").textContent = assets.expected ?? "—";
+    $("asset-sync").textContent = fmtTime(assets.last_sync);
+    $("asset-etag").textContent = assets.manifest_etag ? assets.manifest_etag : "—";
+    $("asset-vehicle").textContent = assets.has_vehicle ? "yes" : "no";
+  }
 
-  // Chart
   const h = j.history || { missions: [], credits: [] };
   updateChart(h);
+}
+
+function updateAssetFromStats(assets) {
+  if (!assets) return;
+  $("cfg-asset-cached").textContent = assets.cached_files ?? 0;
+  $("cfg-asset-expected").textContent = assets.expected ? `/ ${assets.expected}` : "/ —";
+  $("cfg-asset-vehicle").textContent = assets.has_vehicle ? "yes" : "no";
+  $("cfg-asset-etag").textContent = assets.manifest_etag || "—";
+  $("cfg-asset-sync").textContent = fmtTime(assets.last_sync);
+  const badge = $("asset-badge");
+  if (assets.cached_files === 0) {
+    badge.textContent = "not synced";
+    badge.className = "px-2 py-1 rounded-full bg-red-500/15 text-red-300 border border-red-500/20 text-[11px] font-mono";
+  } else if (assets.expected && assets.cached_files >= assets.expected) {
+    badge.textContent = "synced";
+    badge.className = "px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/20 text-[11px] font-mono";
+  } else if (assets.cached_files > 0) {
+    badge.textContent = "partial";
+    badge.className = "px-2 py-1 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/20 text-[11px] font-mono";
+  }
+  $("asset-msg").textContent = assets.manifest_cached ? `Cache: ${assets.cache_dir}` : "No cache yet — use Check/Download";
 }
 
 function updateChart(history) {
@@ -67,7 +100,7 @@ function updateChart(history) {
   if (!ctx) return;
   const labels = history.missions.map((_, i) => i);
   const dataM = history.missions;
-  const dataC = history.credits.map(v => Math.round(v/100)); // scale credits
+  const dataC = history.credits.map(v => Math.round(v/100));
   if (sparkChart) {
     sparkChart.data.labels = labels;
     sparkChart.data.datasets[0].data = dataM;
@@ -106,7 +139,7 @@ function renderMissions(missions) {
   empty.classList.add("hidden");
   let i = 0;
   for (const [id, m] of Object.entries(missions)) {
-    if (i++ > 120) break; // cap render
+    if (i++ > 120) break;
     const name = (m.mission_name || "Unknown").toString();
     if (q && !name.toLowerCase().includes(q) && !id.includes(q)) continue;
     const credits = m.credits ?? 0;
@@ -130,6 +163,92 @@ function renderMissions(missions) {
   }
 }
 
+async function loadServers() {
+  try {
+    const r = await fetch("/api/servers");
+    const j = await r.json();
+    const sel = $("cfg-server-code");
+    if (!sel) return;
+    const current = j.current || "us";
+    sel.innerHTML = "";
+    for (const s of j.servers) {
+      const opt = document.createElement("option");
+      opt.value = s.code;
+      opt.textContent = `${s.code} — ${new URL(s.url).hostname}`;
+      if (s.code === current) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  } catch (e) { console.error("loadServers", e); }
+}
+
+async function loadAssetStatus() {
+  try {
+    const r = await fetch("/api/assets/status");
+    const j = await r.json();
+    if (j.error) {
+      $("asset-msg").textContent = j.error;
+      return;
+    }
+    $("cfg-asset-cached").textContent = j.cached_files ?? 0;
+    $("cfg-asset-expected").textContent = j.expected ? `/ ${j.expected}` : "/ —";
+    $("cfg-asset-vehicle").textContent = j.has_vehicle ? "yes" : "no";
+    $("cfg-asset-etag").textContent = j.manifest_etag || "—";
+    $("cfg-asset-sync").textContent = fmtTime(j.last_sync);
+    $("asset-msg").textContent = `Cache dir: ${j.code_dir} — ${j.cached_files} files`;
+    const badge = $("asset-badge");
+    if (j.cached_files === 0) {
+      badge.textContent = "not synced";
+      badge.className = "px-2 py-1 rounded-full bg-red-500/15 text-red-300 border border-red-500/20 text-[11px] font-mono";
+    } else if (j.expected && j.cached_files >= j.expected) {
+      badge.textContent = "synced";
+      badge.className = "px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/20 text-[11px] font-mono";
+    } else {
+      badge.textContent = `${j.cached_files} files`;
+      badge.className = "px-2 py-1 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/20 text-[11px] font-mono";
+    }
+  } catch (e) { console.error(e); }
+}
+
+async function checkAssets() {
+  const el = $("asset-status");
+  el.textContent = "checking…";
+  try {
+    const r = await fetch("/api/assets/check");
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    if (j.status === 304 || j.needs_update === false) {
+      el.textContent = "✓ up-to-date (304, no git changes)";
+      toast("Assets up-to-date — no download needed");
+    } else {
+      el.textContent = `→ update available (${j.count || "?"} manifest entries, etag ${j.etag || "?"})`;
+      toast(`Update available for ${j.code}: ${j.cached_files ?? 0} cached vs remote`, true);
+    }
+    loadAssetStatus();
+  } catch (e) { el.textContent = "error: "+e; toast("Check failed: "+e, false); }
+  setTimeout(()=> el.textContent="", 5000);
+}
+
+async function syncAssets() {
+  const el = $("asset-status");
+  const code = $("cfg-server-code")?.value || "us";
+  el.textContent = `syncing ${code}…`;
+  try {
+    const r = await fetch("/api/assets/sync", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({code}) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || j.error || JSON.stringify(j));
+    if (j.error) {
+      el.textContent = j.error;
+      toast(j.error, false);
+    } else {
+      el.textContent = j.message || `synced ${j.fetched}/${j.total}`;
+      toast(j.message || `Synced ${code}: ${j.fetched}/${j.total}`, true);
+    }
+    loadAssetStatus();
+    fetchStats();
+  } catch (e) { el.textContent = "error: "+e; toast("Sync failed: "+e, false); }
+  setTimeout(()=> el.textContent="", 6000);
+}
+
 async function loadConfig() {
   try {
     const r = await fetch("/api/config");
@@ -143,8 +262,20 @@ async function loadConfig() {
     $("cfg-share").checked = (cfg.mission_settings?.share_alliance ?? "true").toString().toLowerCase() === "true";
     $("cfg-process").checked = (cfg.mission_settings?.process_alliance ?? "true").toString().toLowerCase() === "true";
     $("cfg-username").value = cfg.credentials?.username ?? "";
-    // password not shown — leave blank to keep
-    $("cfg-password").value = "";
+    $("cfg-password").value = ""; // redacted as *** — leave empty to keep
+    // server_settings
+    const scode = cfg.server_settings?.code ?? "us";
+    const sel = $("cfg-server-code");
+    if (sel) {
+      // if options not loaded yet, set value anyway
+      sel.value = scode;
+    }
+    $("cfg-auto-update").checked = (cfg.server_settings?.auto_update ?? "true").toString().toLowerCase() === "true";
+    $("cfg-refresh-interval").value = cfg.server_settings?.refresh_interval ?? 3600;
+    $("cfg-cache-dir").textContent = cfg.server_settings?.cache_dir ?? "assets_cache";
+    if (cfg.credentials?.password === "***") {
+      $("cfg-password").placeholder = "•••••••• (set)";
+    }
     $("save-status").textContent = "loaded";
     setTimeout(()=> $("save-status").textContent="", 1200);
   } catch(e) { toast("Failed to load config: "+e, false); }
@@ -167,9 +298,13 @@ async function saveConfig() {
     mission_settings: {
       share_alliance: $("cfg-share").checked ? "true" : "false",
       process_alliance: $("cfg-process").checked ? "true" : "false"
+    },
+    server_settings: {
+      code: $("cfg-server-code").value,
+      auto_update: $("cfg-auto-update").checked ? "true" : "false",
+      refresh_interval: $("cfg-refresh-interval").value
     }
   };
-  // Only send credentials if user typed something
   const u = $("cfg-username").value.trim();
   const p = $("cfg-password").value;
   if (u || p) {
@@ -183,15 +318,15 @@ async function saveConfig() {
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || JSON.stringify(j));
     $("save-status").textContent = "saved ✓";
-    toast("Config saved");
+    toast("Config saved — server="+payload.server_settings.code);
     fetchStats();
+    loadAssetStatus();
     setTimeout(()=> $("save-status").textContent="", 2000);
   } catch(e) { $("save-status").textContent = "error"; toast("Save failed: "+e, false); }
 }
 
-function refreshAll(){ fetchStats(); loadConfig(); }
+function refreshAll(){ fetchStats(); loadConfig(); loadServers(); loadAssetStatus(); }
 
-// Tabs
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => { b.className = "tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium"; });
@@ -203,8 +338,14 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 });
 
 $("missions-search")?.addEventListener("input", () => fetchStats());
+$("cfg-server-code")?.addEventListener("change", () => {
+  // hint user to sync after region change
+  $("asset-msg").textContent = "Region changed — click Check / Download to fetch for this region (smart md5 diff).";
+});
 
-// Init
 fetchStats();
 loadConfig();
+loadServers();
+loadAssetStatus();
 setInterval(fetchStats, 5000);
+setInterval(loadAssetStatus, 30000);
