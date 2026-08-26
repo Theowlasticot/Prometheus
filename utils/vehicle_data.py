@@ -2,8 +2,11 @@ import asyncio
 import json
 import os
 import re
+from pathlib import Path
 from utils.pretty_print import display_info, display_error
 from data.config_settings import get_server_url
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 async def gather_vehicle_data(browsers, num_threads):
     vehicle_ids = []
@@ -77,9 +80,9 @@ async def gather_vehicle_data(browsers, num_threads):
             final_data[v_type_id].extend(ids)
 
     # 4. Save atomically
-    os.makedirs('data', exist_ok=True)
-    tmp_path = 'data/vehicle_data.json.tmp'
-    final_path = 'data/vehicle_data.json'
+    os.makedirs(PROJECT_ROOT / 'data', exist_ok=True)
+    tmp_path = PROJECT_ROOT / 'data' / 'vehicle_data.json.tmp'
+    final_path = PROJECT_ROOT / 'data' / 'vehicle_data.json'
     with open(tmp_path, 'w') as f:
         json.dump(final_data, f, indent=4)
     os.replace(tmp_path, final_path)

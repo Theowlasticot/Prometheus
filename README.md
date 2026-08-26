@@ -22,7 +22,7 @@ Built with Python and Playwright, Prometheus handles mission dispatching, intell
   * **Multi-Threading:** Configure multiple browser instances to handle high mission volumes efficiently.
   * **Headless Mode:** Run the bot in the background without visible windows.
 
-**⚠️ Region Warning:** Currently, this bot is optimized for the **US Server**. Usage on other region servers will require modifying the `.mscv` definition files in the `us/` folder. **However, international support is our top priority for the next update (see Roadmap).**
+**🌍 International Support:** Now supports **19 servers** (us, uk, de, fr, nl, au, cz, dk, fi, it, pl, pt, se, no, kr, es, jp, ro, ru) via dashboard. Select your region in the dashboard → **Check** → **Download/Sync** — smart `etag/md5` diff, only the concerned region, no re-download if unchanged. The bot automatically uses `assets_cache/{code}` or falls back to bundled `us/`.
 
 ## 📋 Prerequisites
 
@@ -64,31 +64,45 @@ username = your_email@example.com
 password = your_password
 
 [browser_settings]
-# Set to true to hide the browser window (run in background)
 headless = true
-# Number of browser threads to launch
 browsers = 2
 
 [personnel_settings]
-# 0: Disabled
-# 1, 2, 3: Recruit for X days
-# -1: Automatic (Requires Premium)
-hiring_mode = 3
+hiring_mode = 3  # 0 Disabled, 1/2/3 days, -1 Automatic (Premium)
 
 [delays]
-# Delay (in seconds) between mission checks
 missions = 10
-# Delay (in seconds) between transport checks
-transport = 20
-# Delay (in seconds) between personnel checks (e.g., 3600 = 1 hour)
+transport = 60
 personnel_check = 3600
 
 [mission_settings]
-# Set to false to stop sharing missions with your alliance
 share_alliance = true
-# Set to false if you want to ignore alliance missions completely
 process_alliance = true
+
+[server_settings]
+code = us  # 19 codes: us/uk/de/fr/nl/au/cz/dk/fi/it/pl/pt/se/no/kr/es/jp/ro/ru
+auto_update = true
+refresh_interval = 3600
+cache_dir = assets_cache
+manifest_url = https://raw.githubusercontent.com/cfHxqA/Mission-Chief.Bot/master/Assets.json
+server_manifest_url = https://raw.githubusercontent.com/cfHxqA/Mission-Chief.Bot/master/Assets/Server.json
+
+[transport_settings]
+allow_alliance_hospitals = true
+allow_alliance_cells = true
+max_distance = 0  # km, 0 = unlimited
+
+[dispatch_settings]
+min_percent = 70  # 0-100
+use_aar = false  # experimental AAR API
+
+[mission_filter]
+ignore_storm = false
+ignore_event = false
+min_credits = 0
 ```
+
+> **Dashboard:** `uvicorn dashboard.app:app --host 127.0.0.1 --port 8000 --reload` then open `http://127.0.0.1:8000` — **everything configurable** (credentials, browser, delays, personnel, alliance, server/region, transport, dispatch, mission filter). No token, local only. Use **Server / Region → Check → Download** for smart per-region `.mscv` sync.
 
 ## 🖥️ Usage
 

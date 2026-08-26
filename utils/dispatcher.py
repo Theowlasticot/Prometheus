@@ -1,6 +1,7 @@
 import json
 import asyncio
 import os
+from pathlib import Path
 
 from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import VehicleManager
@@ -28,11 +29,13 @@ def reload_vehicle_manager():
 VEHICLE_DATA_CACHE = None
 USER_TO_SYSTEM_MAP = {} 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 async def load_vehicle_data(force=False):
     global VEHICLE_DATA_CACHE, USER_TO_SYSTEM_MAP
     if VEHICLE_DATA_CACHE is None or force:
         try:
-            with open('data/vehicle_data.json', 'r') as file:
+            with open(PROJECT_ROOT / 'data' / 'vehicle_data.json', 'r') as file:
                 VEHICLE_DATA_CACHE = json.load(file)
             
             # Build Reverse Map for Intelligent Logic
@@ -50,10 +53,13 @@ async def load_vehicle_data(force=False):
 
 async def navigate_and_dispatch(browsers):
     try:
-        with open('data/mission_data.json', 'r') as file:
+        with open(PROJECT_ROOT / 'data' / 'mission_data.json', 'r') as file:
             mission_data = json.load(file)
     except FileNotFoundError:
         display_error("mission_data.json not found.")
+        return
+    except (OSError, json.JSONDecodeError) as e:
+        display_error(f"mission_data.json unreadable: {e}")
         return
 
     await load_vehicle_data(force=True)
@@ -161,23 +167,35 @@ async def navigate_and_dispatch(browsers):
 
         # --- SELECT VEHICLES ---
         vehicle_requirements = data.get("vehicles", [])
-        # Filter S5 / disabled vehicles out — only available and not disabled
+        # Filter S5 / disabled vehicles — only available, visible, not disabled
+        available_vehicles_elements = []
         try:
-            available_vehicles_elements = await page.query_selector_all('input.vehicle_checkbox:visible:not(:disabled)')
-            # Fallback if selector unsupported, filter manually
-            if not available_vehicles_elements:
-                all_cbs = await page.query_selector_all('input.vehicle_checkbox:visible')
-                available_vehicles_elements = []
-                for cb in all_cbs:
+            all_cbs = await page.query_selector_all('input.vehicle_checkbox')
+            for cb in all_cbs:
+                try:
+                    if not await cb.is_visible():
+                        continue
+                    # Check disabled attribute
+                    dis = await cb.get_attribute("disabled")
+                    if dis is not None:
+                        continue
+                    # Check parent row disabled class
+                    is_disabled = await cb.is_disabled() if hasattr(cb, "is_disabled") else False
+                    if is_disabled:
+                        continue
+                    available_vehicles_elements.append(cb)
+                except Exception:
+                    # Fallback: add if no exception
                     try:
-                        dis = await cb.get_attribute("disabled")
-                        if dis is None:
-                            # Also check parent tr disabled class
+                        if await cb.is_visible():
                             available_vehicles_elements.append(cb)
                     except Exception:
-                        available_vehicles_elements.append(cb)
+                        continue
+            if not available_vehicles_elements:
+                # Fallback to original visible selector
+                available_vehicles_elements = await page.query_selector_all('input.vehicle_checkbox:visible')
         except Exception:
-            available_vehicles_elements = await page.query_selector_all('input.vehicle_checkbox:visible')
+            available_vehicles_elements = await page.query_selector_all('input.vehicle_checkbox')
         used_vehicle_ids = []
         
         current_water = 0
@@ -378,11 +396,33 @@ async def navigate_and_dispatch(browsers):
                 display_warning(f"No dispatch button for {mission_id}")
 
 async def check_mission_requirements_global_percent(page, mission_data):
-    checkboxes = await page.query_selector_all('input.vehicle_checkbox:visible')
+    # Use same visible+enabled filter as dispatch
+    try:
+        all_cbs = await page.query_selector_all('input.vehicle_checkbox')
+        checkboxes = []
+        for cb in all_cbs:
+            try:
+                if not await cb.is_visible():
+                    continue
+                dis = await cb.get_attribute("disabled")
+                if dis is not None:
+                    continue
+                if hasattr(cb, "is_disabled") and await cb.is_disabled():
+                    continue
+                checkboxes.append(cb)
+            except Exception:
+                continue
+        if not checkboxes:
+            checkboxes = await page.query_selector_all('input.vehicle_checkbox:visible')
+    except Exception:
+        checkboxes = await page.query_selector_all('input.vehicle_checkbox:visible')
     available_ids_pool = []
     for cb in checkboxes:
-        v = await cb.get_attribute("value")
-        if v: available_ids_pool.append(v)
+        try:
+            v = await cb.get_attribute("value")
+            if v: available_ids_pool.append(v)
+        except Exception:
+            continue
     
     vehicle_requirements = mission_data.get("vehicles", [])
     total_needed = 0

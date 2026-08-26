@@ -2,10 +2,13 @@ import asyncio
 import json
 import os
 import re
+from pathlib import Path
 
 from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import VehicleManager
 from data.config_settings import get_server_code, get_server_url, is_alliance_mission_name
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Singleton — dynamic code, cache-aware
 def _create_manager():
@@ -82,9 +85,9 @@ async def check_and_grab_missions(browsers, num_threads):
         display_info(f"Found {len(mission_list)} missions.")
         mission_data = await split_mission_ids_among_threads(mission_list, browsers, num_threads)
         
-        os.makedirs('data', exist_ok=True)
-        tmp_path = 'data/mission_data.json.tmp'
-        final_path = 'data/mission_data.json'
+        os.makedirs(PROJECT_ROOT / 'data', exist_ok=True)
+        tmp_path = PROJECT_ROOT / 'data' / 'mission_data.json.tmp'
+        final_path = PROJECT_ROOT / 'data' / 'mission_data.json'
         with open(tmp_path, 'w') as outfile:
             json.dump(mission_data, outfile, indent=4)
         os.replace(tmp_path, final_path)
@@ -187,31 +190,47 @@ async def gather_mission_info(mission_entries, browser, thread_id):
 
                     # Resource Parsing (Legacy Support) — i18n: water/eau/wasser, foam/mousse/schaum
                     text_lower = text.lower()
-                    water_words = ["water", "eau", "wasser", "liters", "gallons", "gal", "l "]
+                    water_words = ["water", "eau", "wasser", "liters", "gallons", "gal"]
                     foam_words = ["foam", "mousse", "schaum", "schuim", "ecume"]
                     if any(w in text_lower for w in water_words) and any(x in text_lower for x in ["missing", "needed", "benötigt", "manque", "benodigd", "fehl"]):
                         match = re.search(r'([\d.,]+)\s*(?:l|liters|gal|gallons|water|eau|wasser)', text_lower)
                         if match:
+                            raw = match.group(1).strip()
+                            # Handle both 1,200 and 1.200 and 5,3
+                            cleaned = raw.replace(' ', '')
+                            # If contains both . and , assume , is thousand and . is decimal -> remove ,
+                            # If only , assume decimal comma for EU (5,3 -> 5.3)
+                            if ',' in cleaned and '.' in cleaned:
+                                cleaned = cleaned.replace(',', '')
+                            elif ',' in cleaned and '.' not in cleaned:
+                                # 5,3 -> 5.3, but 1,200 -> 1200 (heuristic: if comma + 3 digits at end -> thousand)
+                                if re.search(r',\d{3}$', cleaned):
+                                    cleaned = cleaned.replace(',', '')
+                                else:
+                                    cleaned = cleaned.replace(',', '.')
                             try:
-                                # Handle 1.500 vs 1,500 vs 1.5
-                                num = match.group(1).replace(',', '').replace('.', '')
-                                # But keep decimal if needed? For water we want int
-                                water_needed = int(re.sub(r'[.,]', '', match.group(1))[:10].replace(',', '').replace('.', '') or 0)
-                                # Simpler fallback
-                                water_needed = int(match.group(1).replace(',', '').replace('.', '').replace(' ', '') or 0)
+                                water_needed = int(float(cleaned))
                             except ValueError:
                                 try:
-                                    water_needed = int(float(match.group(1).replace(',', '')))
+                                    water_needed = int(re.sub(r'[^\d]', '', cleaned) or 0)
                                 except ValueError:
                                     pass
                     if any(w in text_lower for w in foam_words) and any(x in text_lower for x in ["missing", "needed", "benötigt", "manque", "benodigd", "fehl"]):
                         match = re.search(r'([\d.,]+)\s*(?:l|liters|gal|gallons|foam|mousse|schaum)', text_lower)
                         if match:
+                            raw = match.group(1).strip().replace(' ', '')
+                            if ',' in raw and '.' in raw:
+                                raw = raw.replace(',', '')
+                            elif ',' in raw and '.' not in raw:
+                                if re.search(r',\d{3}$', raw):
+                                    raw = raw.replace(',', '')
+                                else:
+                                    raw = raw.replace(',', '.')
                             try:
-                                foam_needed = int(match.group(1).replace(',', '').replace('.', '') or 0)
+                                foam_needed = int(float(raw))
                             except ValueError:
                                 try:
-                                    foam_needed = int(float(match.group(1).replace(',', '')))
+                                    foam_needed = int(re.sub(r'[^\d]', '', raw) or 0)
                                 except ValueError:
                                     pass
 
@@ -232,10 +251,11 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                     for entry in vehicle_entries:
                         try:
                             match = re.search(r'(\d+)\s+(.+)', entry.strip())
-                            if match:
-                                count = int(match.group(1))
-                                name = match.group(2).strip().lower()
-                                if name.endswith('s') and not name.endswith('ems') and not name.endswith('ss'): name = name[:-1]
+                            if not match:
+                                continue
+                            count = int(match.group(1))
+                            name = match.group(2).strip().lower()
+                            if name.endswith('s') and not name.endswith('ems') and not name.endswith('ss'): name = name[:-1]
                                 
                             # Filter Resources — i18n
                             if any(w in name for w in ["water", "wasser", "eau", "liters", "gallons"]) and not any(x in name for x in ["tanker", "rescue", "trailer", "boat", "wassertank", "tank"]):
@@ -245,10 +265,10 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                                 foam_needed = max(foam_needed, count)
                                 continue
 
-                                if name == "car to tow":
-                                    crashed_cars = count
-                                else:
-                                    vehicles.append({"name": name, "count": count})
+                            if name == "car to tow":
+                                crashed_cars = count
+                            else:
+                                vehicles.append({"name": name, "count": count})
                         except (ValueError, AttributeError) as e:
                             display_error(f"Vehicle entry parse error: {e}")
                             continue

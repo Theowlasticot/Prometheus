@@ -1,3 +1,4 @@
+import asyncio
 import configparser
 import json
 import os
@@ -111,12 +112,13 @@ def _write_config_dict(updates: Dict[str, Any]):
             if lines and lines[-1].strip() != "":
                 lines.append("")
             lines.append(f"[{section}]")
-            section_starts[section] = len(lines) - 1
-            # Also need to update subsequent section starts after append
-            # Recompute quickly
-            for sec, pos in list(section_starts.items()):
-                if sec != section and pos > section_starts[section]:
-                    section_starts[sec] += 2
+            # Recompute section starts after append
+            section_starts = {}
+            for idx, line in enumerate(lines):
+                s = line.strip()
+                if s.startswith("[") and s.endswith("]"):
+                    sec = s[1:-1].strip()
+                    section_starts[sec] = idx
 
         sec_start = section_starts[section]
         # Find section end (next section start or EOF)
@@ -565,7 +567,8 @@ async def api_assets_sync(request: Request):
             cur = gsc()
             if cur != code:
                 _write_config_dict({"server_settings": {"code": code}})
-        result = sync_code(code, cache_dir, manifest_url, server_manifest_url)
+        # Run sync in thread to avoid blocking event loop (uses ThreadPool internally)
+        result = await asyncio.to_thread(sync_code, code, cache_dir, manifest_url, server_manifest_url)
         # After sync, reload VehicleManagers
         try:
             import utils.dispatcher as disp

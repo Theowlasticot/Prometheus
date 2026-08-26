@@ -76,8 +76,8 @@ def get_hiring_mode():
 def get_hiring_check_interval():
     _reload()
     try:
-        # How often (in seconds) to check personnel. Default 1 hour (3600s)
-        return config.getint('delays', 'personnel_check', fallback=3600)
+        v = config.getint('delays', 'personnel_check', fallback=3600)
+        return max(600, min(v, 86400))
     except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
         return 3600
 
