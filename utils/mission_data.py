@@ -277,18 +277,38 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 display_error(f"Missing vehicles parse error {mission_id}: {e}")
 
             if found_missing_info or crashed_cars > 0:
+                # Fix double-count: only add ambulance if not already in vehicles
                 if current_patient_count > 0:
-                    vehicles.append({"name": "ambulance", "count": current_patient_count})
+                    has_amb = any("ambulance" in v.get("name","").lower() for v in vehicles)
+                    if not has_amb:
+                        vehicles.append({"name": "ambulance", "count": current_patient_count})
+                    else:
+                        # Update existing ambulance count to max
+                        for v in vehicles:
+                            if "ambulance" in v.get("name","").lower():
+                                v["count"] = max(v["count"], current_patient_count)
+                # Try to still get credits via help if missing (helps sorting)
+                if credits_value == 0:
+                    try:
+                        await page.click('#mission_help')
+                        await page.wait_for_selector('#iframe-inside-container', timeout=3000)
+                        _, scraped_credits = await gather_vehicle_requirements(page)
+                        credits_value = scraped_credits
+                        await page.keyboard.press('Escape')
+                        await asyncio.sleep(0.3)
+                    except Exception:
+                        pass
                 
                 mission_data[mission_id] = {
                     "mission_name": f"Missing: {mission_name}",
-                    "credits": 0,
+                    "credits": credits_value,
                     "vehicles": vehicles,
                     "patients": current_patient_count,
                     "crashed_cars": crashed_cars,
                     "water_needed": water_needed,
                     "foam_needed": foam_needed,
-                    "required_personnel": []
+                    "required_personnel": [],
+                    "required_expansions": []
                 }
                 continue
 
@@ -345,7 +365,8 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 "crashed_cars": crashed_cars,
                 "water_needed": water_needed,
                 "foam_needed": foam_needed,
-                "required_personnel": []
+                "required_personnel": [],
+                "required_expansions": []
             }
         except asyncio.CancelledError:
             raise

@@ -39,17 +39,42 @@ Built with Python and Playwright, Prometheus handles mission dispatching, intell
     cd prometheus
     ```
 
-2.  **Install dependencies:**
+2.  **Create & activate venv (required — do not use system `python`):**
+
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate  # Windows: venv\Scripts\activate
+    which python  # must point to .../Prometheus/venv/bin/python
+    ```
+
+3.  **Install dependencies (inside venv):**
 
     ```bash
     pip install -r requirements.txt
     ```
 
-3.  **Install Playwright browsers:**
+4.  **Install Playwright browsers:**
 
     ```bash
-    playwright install
+    playwright install  # or playwright install chromium
     ```
+
+> **If `uvicorn` not found or `ModuleNotFoundError: fastapi`:** you used system `python` (`/usr/bin/python3 3.9`) not `venv`. Fix with `source venv/bin/activate` or `venv/bin/python -m uvicorn dashboard.app:app --host 127.0.0.1 --port 8000 --reload`. **Do not run `python dashboard/app.py`** — it has no server; must be `uvicorn dashboard.app:app`.
+
+### 🖥️ Dashboard — Everything from the UI (recommended)
+
+```bash
+# Terminal 1 — Dashboard (keep running)
+venv/bin/python -m uvicorn dashboard.app:app --host 127.0.0.1 --port 8000 --reload
+# open http://127.0.0.1:8000  (or http://127.0.0.1:8000/api/docs for API)
+# If port busy: lsof -ti:8000 | xargs kill -9  then retry
+# If blank page: CDN tailwind/chart.js needs internet; server still runs
+```
+
+* **Stats:** missions/credits/fleet/personnel/alliance, activity sparkline, assets cache
+* **Missions:** table `mission_data.json` with search
+* **Config & Settings → Save Config:** credentials, browser (`headless`/`browsers 1-8`), delays, personnel (`hiring_mode`), alliance, **Server/Region 19 codes** + `auto_update` + `refresh_interval`, **Transport** (`allow_alliance_hospitals/cells`, `max_distance`), **Dispatch** (`min_percent`, `use_aar`), **Mission Filter** (`ignore_storm/event`, `min_credits`) — all `PUT /api/config` (redacted `***` for password) + **Server → Check (git `304`) → Download/Sync** smart `md5` only concerned region
+* **Bot control (new):** `Start Bot [1/2/3]` / `Stop` / `Status` / `Logs` — controls `Main.py` without CLI
 
 ## ⚙️ Configuration
 
@@ -128,6 +153,18 @@ Upon starting, you will be presented with the **V3 Menu**:
   * **Option 1 (Default):** Dedicates one browser thread to Transport logic and the remaining threads to Mission Dispatching. (Requires `browsers = 2` or more in config).
   * **Option 2:** Uses **all** available threads for Mission Dispatching.
   * **Option 3:** Dedicates the browser solely to Transport logic.
+
+### 🎮 Dashboard Bot Control (new — no CLI needed)
+
+Everything can be done from `http://127.0.0.1:8000` → **Bot Control** tab:
+
+* **Start Bot:** choose mode `1/2/3` → **Start Bot** (uses `venv/bin/python` if present, else `python`, feeds menu choice via `stdin`, captures logs)
+* **Stop:** `Stop` button → `terminate` → `kill` after 5s
+* **Status/Logs:** `GET /api/bot/status` (`running`, `pid`, `mode`, `uptime`) polled every 3s + `GET /api/bot/logs` (last 500, tail 80 shown, `whitespace-pre-wrap`)
+
+API: `POST /api/bot/start {mode:1}`, `POST /api/bot/stop`, `GET /api/bot/status`, `GET /api/bot/logs` — local only, no token.
+
+> **Troubleshooting dashboard launch:** `source venv/bin/activate` before `uvicorn`; `venv/bin/python -m uvicorn dashboard.app:app --host 127.0.0.1 --port 8000 --reload`; if `port busy` `lsof -ti:8000 | xargs kill -9`; if blank page check internet for `tailwindcdn`/`chart.js` CDN.
 
 ## 🗺️ Prometheus Development Roadmap
 

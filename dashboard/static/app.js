@@ -349,7 +349,51 @@ async function saveConfig() {
   } catch(e) { $("save-status").textContent = "error"; toast("Save failed: "+e, false); }
 }
 
-function refreshAll(){ fetchStats(); loadConfig(); loadServers(); loadAssetStatus(); }
+function refreshAll(){ fetchStats(); loadConfig(); loadServers(); loadAssetStatus(); refreshBotStatus(); }
+
+async function refreshBotStatus(){
+  try{
+    const r = await fetch("/api/bot/status");
+    const j = await r.json();
+    $("bot-status").textContent = j.running ? `● running` : "○ stopped";
+    $("bot-status").className = j.running ? "text-emerald-400" : "text-slate-400";
+    $("bot-pid").textContent = j.pid ?? "—";
+    $("bot-mode-status").textContent = j.mode ?? "—";
+    $("bot-uptime").textContent = j.running ? `${j.uptime}s` : "—";
+    if(j.logs_tail && j.logs_tail.length){
+      $("bot-logs").textContent = j.logs_tail.join("\n");
+    }
+  }catch(e){ /* ignore */ }
+}
+async function refreshBotLogs(){
+  try{
+    const r = await fetch("/api/bot/logs");
+    const j = await r.json();
+    $("bot-logs").textContent = j.logs.length ? j.logs.slice(-80).join("\n") : "— no logs —";
+  }catch(e){ toast("Logs failed: "+e, false); }
+}
+async function startBot(){
+  const mode = $("bot-mode").value;
+  $("bot-msg").textContent = `starting mode ${mode}…`;
+  try{
+    const r = await fetch("/api/bot/start", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({mode})});
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.detail || JSON.stringify(j));
+    $("bot-msg").textContent = `started pid ${j.pid} mode ${j.mode}`;
+    toast(`Bot started mode ${j.mode}`);
+    refreshBotStatus();
+  }catch(e){ $("bot-msg").textContent = "error: "+e; toast("Start failed: "+e, false); }
+}
+async function stopBot(){
+  $("bot-msg").textContent = "stopping…";
+  try{
+    const r = await fetch("/api/bot/stop", {method:"POST"});
+    const j = await r.json();
+    $("bot-msg").textContent = j.status;
+    toast("Bot stopped");
+    refreshBotStatus();
+  }catch(e){ $("bot-msg").textContent = "error: "+e; toast("Stop failed: "+e, false); }
+}
 
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -371,5 +415,7 @@ fetchStats();
 loadConfig();
 loadServers();
 loadAssetStatus();
+refreshBotStatus();
 setInterval(fetchStats, 5000);
 setInterval(loadAssetStatus, 30000);
+setInterval(refreshBotStatus, 3000);
