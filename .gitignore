@@ -1,0 +1,41 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache/
+.pytest_cache/
+.hypothesis/
+.DS_Store
+data/vehicle_data.json
+data/mission_data.json
+data/*.tmp
+*.tmp
+.opencode_test
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Keep config.ini tracked (example credentials empty) but ignore local overrides if you create config.local.ini
+# config.ini
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/

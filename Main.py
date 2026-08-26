@@ -20,10 +20,14 @@ async def transport_logic(browser):
         try:
             display_info("Handling transport requests.")
             await handle_transport_requests(browser)
-            display_info("Waiting for 3 minutes before the next transport.")
+            display_info(f"Waiting {get_transport_delay()}s before next transport.")
             await asyncio.sleep(get_transport_delay())
+        except asyncio.CancelledError:
+            display_info("Transport logic cancelled.")
+            raise
         except Exception as e:
             display_error(f"Error in transport logic: {e}")
+            await asyncio.sleep(5)
 
 async def mission_logic(browsers_for_missions):
     display_info("Starting mission logic.")
@@ -32,6 +36,7 @@ async def mission_logic(browsers_for_missions):
     # --- PHASE 1: Tracking Variables ---
     last_personnel_check = 0
     personnel_interval = get_hiring_check_interval() # e.g. 3600 seconds
+    project_root = os.path.dirname(os.path.abspath(__file__))
     
     while True:
         try:
@@ -48,7 +53,8 @@ async def mission_logic(browsers_for_missions):
             
             # --- Vehicle Data Refresh Logic ---
             # Refresh every 50 loops OR if the file doesn't exist
-            should_refresh_vehicles = not os.path.exists("data/vehicle_data.json") or (loop_count % 50 == 0)
+            vehicle_data_path = os.path.join(project_root, "data", "vehicle_data.json")
+            should_refresh_vehicles = not os.path.exists(vehicle_data_path) or (loop_count % 50 == 0)
             
             if should_refresh_vehicles:
                 display_info(f"Refreshing vehicle data (Loop {loop_count})...")
@@ -62,9 +68,12 @@ async def mission_logic(browsers_for_missions):
             display_info("Navigating and dispatching missions.")
             await navigate_and_dispatch(browsers_for_missions)
             
-            display_info("Waiting for 10 seconds before checking missions again.")
+            display_info(f"Waiting {get_mission_delay()}s before checking missions again.")
             await asyncio.sleep(get_mission_delay())
             
+        except asyncio.CancelledError:
+            display_info("Mission logic cancelled.")
+            raise
         except Exception as e:
             display_error(f"Error in mission logic: {e}")
             # Add a small sleep here to prevent rapid-fire error loops
@@ -151,11 +160,27 @@ async def login():
             print("Invalid selection. Exiting.")
             exit(1)
 
-        await asyncio.gather(*tasks)
-        
-        for browser in browsers:
-            display_info(f"Closing browser for thread: {successful_logins[browsers.index(browser)]}")
-            await browser.close()
+        try:
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            display_info("Shutting down tasks...")
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except KeyboardInterrupt:
+            display_info("Interrupted by user, shutting down...")
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            for browser in browsers:
+                try:
+                    idx = browsers.index(browser)
+                    tid = successful_logins[idx] if idx < len(successful_logins) else "?"
+                    display_info(f"Closing browser for thread: {tid}")
+                    await browser.close()
+                except Exception as e:
+                    display_error(f"Error closing browser: {e}")
 
     return successful_logins, browsers
 

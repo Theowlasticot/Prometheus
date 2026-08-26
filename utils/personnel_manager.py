@@ -40,20 +40,33 @@ async def manage_personnel(browser):
         for b_id in building_ids:
             try:
                 await page.goto(f"https://www.missionchief.com/buildings/{b_id}")
+                await page.wait_for_load_state('networkidle')
                 
                 # Check Personnel Count vs Target
-                # Selector based on: <dt>Personnel:</dt><dd>27 Employees, Target: 300 Personnel ...</dd>
-                personnel_dd = await page.query_selector("dl.dl-horizontal dt:has-text('Personnel:') + dd")
+                # Use locator for :has-text support, fallback to JS evaluation
+                personnel_dd = None
+                try:
+                    loc = page.locator("dl.dl-horizontal dt:has-text('Personnel:') + dd")
+                    if await loc.count() > 0:
+                        personnel_dd = loc.first
+                except Exception:
+                    personnel_dd = None
                 
                 if personnel_dd:
-                    text = await personnel_dd.inner_text()
+                    try:
+                        text = await personnel_dd.inner_text()
+                    except Exception:
+                        text = ""
                     # Parse "27 Employees" and "Target: 300"
                     current_match = re.search(r'(\d+)\s+Employees', text)
                     target_match = re.search(r'Target:\s*(\d+)', text)
                     
                     if current_match and target_match:
-                        current = int(current_match.group(1))
-                        target = int(target_match.group(1))
+                        try:
+                            current = int(current_match.group(1))
+                            target = int(target_match.group(1))
+                        except ValueError:
+                            continue
                         
                         if current < target:
                             # Need to hire
@@ -61,10 +74,14 @@ async def manage_personnel(browser):
                         else:
                             # display_info(f"Station {b_id}: Full ({current}/{target})")
                             pass
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
-                # display_error(f"Error checking building {b_id}: {e}")
-                pass
+                display_error(f"Error checking building {b_id}: {e}")
+                continue
                 
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         display_error(f"Error in personnel management: {e}")
     
@@ -99,13 +116,16 @@ async def handle_hiring(page, building_id, mode):
                 display_error(f"Could not find {mode}-day button for {building_id}.")
                 
         elif mode == -1:
-            # Premium Automatic not implemented yet !!
+            display_warning(f"Automatic hiring (Premium) not fully implemented, using 3-day for {building_id}")
             btn_selector = f"a[href='/buildings/{building_id}/hire_do/3']" # Defaulting to max
             btn = await page.query_selector(btn_selector)
             if btn:
                 await btn.click()
+                await page.wait_for_timeout(500)
                 display_info(f"Started recruitment (Automatic/Max) for {building_id}.")
 
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
 
         display_error(f"Failed to hire at {building_id}: {e}")
