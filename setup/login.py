@@ -10,7 +10,7 @@ async def login_single(username, password, headless, thread_id, delay, playwrigh
         await asyncio.sleep(delay)
     browser = None
     try:
-        browser = await playwright.chromium.launch(headless=headless, devtools=False)
+        browser = await playwright.chromium.launch(headless=headless)
         page = await browser.new_page()
         base = get_server_url().rstrip("/")
         await page.goto(f"{base}/users/sign_in", timeout=30000)

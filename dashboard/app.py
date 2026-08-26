@@ -592,11 +592,18 @@ async def api_assets_sync(request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- Bot control (subprocess) ---
+# --- Bot control (subprocess) + persistent logs ---
 _bot_process: subprocess.Popen | None = None
 _bot_logs: collections.deque = collections.deque(maxlen=500)
 _bot_start_time: float | None = None
 _bot_mode: str | None = None
+_bot_log_file: Path | None = None
+_bot_thread: Any = None
+import threading
+import queue
+
+LOG_DIR = PROJECT_ROOT / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 def _bot_is_running() -> bool:
     global _bot_process
@@ -604,23 +611,58 @@ def _bot_is_running() -> bool:
         return False
     return _bot_process.poll() is None
 
+def _bot_drain_thread(proc: subprocess.Popen, log_file: Path):
+    """Thread that drains stdout and writes to deque + file (non-blocking)."""
+    try:
+        # Open file in append
+        with open(log_file, "a", encoding="utf-8") as f:
+            while True:
+                line = proc.stdout.readline()
+                if not line:
+                    if proc.poll() is not None:
+                        break
+                    time.sleep(0.1)
+                    continue
+                if isinstance(line, bytes):
+                    line = line.decode(errors="ignore")
+                line = line.rstrip("\n")
+                # Write to file with timestamp
+                try:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}\n")
+                    f.flush()
+                except Exception:
+                    pass
+                _bot_logs.append(line)
+                # deque maxlen handles popleft
+    except Exception:
+        pass
+
 def _bot_read_logs():
+    # Legacy drain for fallback — now non-blocking via thread, so just check if thread alive
+    # Try to read any pending without blocking (non-thread fallback)
     global _bot_process
     if _bot_process is None or _bot_process.stdout is None:
         return
+    # If thread is running, logs are already being drained
+    if _bot_thread and _bot_thread.is_alive():
+        return
+    # Fallback: try non-blocking read via select if available
     try:
-        # Non-blocking read available lines
         import select
-        # fallback: try read without blocking
-        while True:
-            line = _bot_process.stdout.readline()
-            if not line:
-                break
-            if isinstance(line, bytes):
-                line = line.decode(errors="ignore")
-            _bot_logs.append(line.rstrip())
-            if len(_bot_logs) > 500:
-                _bot_logs.popleft()
+        if hasattr(select, "select"):
+            while True:
+                rlist, _, _ = select.select([_bot_process.stdout], [], [], 0)
+                if not rlist:
+                    break
+                line = _bot_process.stdout.readline()
+                if not line:
+                    break
+                if isinstance(line, bytes):
+                    line = line.decode(errors="ignore")
+                _bot_logs.append(line.rstrip())
+        else:
+            # No select, try one readline with timeout via thread
+            pass
     except Exception:
         pass
 
@@ -646,7 +688,7 @@ async def api_bot_logs():
 
 @app.post("/api/bot/start")
 async def api_bot_start(request: Request):
-    global _bot_process, _bot_start_time, _bot_mode
+    global _bot_process, _bot_start_time, _bot_mode, _bot_log_file, _bot_thread
     if _bot_is_running():
         raise HTTPException(status_code=409, detail=f"Bot already running pid={_bot_process.pid} mode={_bot_mode}")
     try:
@@ -658,14 +700,16 @@ async def api_bot_start(request: Request):
         mode = str(body.get("mode", "1")).strip() or "1"
         if mode not in ("1", "2", "3"):
             raise HTTPException(status_code=400, detail="mode must be 1,2,3")
-        # Use venv python if exists else sys.executable
         venv_python = PROJECT_ROOT / "venv" / "bin" / "python"
         py = str(venv_python) if venv_python.exists() else sys.executable
         env = os.environ.copy()
-        # Ensure unbuffered
         env["PYTHONUNBUFFERED"] = "1"
-        # Start Main.py with mode input via stdin
-        # Main.py show_menu reads input(), so we feed mode + newline
+        # Log file per run
+        _bot_log_file = LOG_DIR / f"bot-{int(time.time())}-mode{mode}.log"
+        try:
+            _bot_log_file.touch(exist_ok=True)
+        except Exception:
+            pass
         proc = subprocess.Popen(
             [py, "-u", "Main.py"],
             cwd=str(PROJECT_ROOT),
@@ -673,10 +717,10 @@ async def api_bot_start(request: Request):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            bufsize=1
+            bufsize=1,
+            env=env
         )
         try:
-            # Feed menu choice
             proc.stdin.write(mode + "\n")
             proc.stdin.flush()
         except Exception:
@@ -684,18 +728,26 @@ async def api_bot_start(request: Request):
         _bot_process = proc
         _bot_start_time = time.time()
         _bot_mode = mode
-        # Give it a moment to start
-        await asyncio.sleep(0.5)
-        # Check if immediately exited (e.g., bad credentials)
+        # Start drain thread
+        try:
+            _bot_thread = threading.Thread(target=_bot_drain_thread, args=(proc, _bot_log_file), daemon=True)
+            _bot_thread.start()
+        except Exception as e:
+            # Fallback without thread
+            _bot_thread = None
+        await asyncio.sleep(0.7)
         if proc.poll() is not None:
-            out = ""
-            try:
-                out = proc.stdout.read() or ""
-            except Exception:
-                pass
-            _bot_logs.extend(out.splitlines()[-50:])
-            raise HTTPException(status_code=500, detail=f"Bot exited immediately (code {proc.returncode}): {out[-500:]}")
-        return JSONResponse({"status": "started", "pid": proc.pid, "mode": mode})
+            # Drain any remaining
+            _bot_read_logs()
+            out = "\n".join(list(_bot_logs)[-30:])
+            raise HTTPException(status_code=500, detail=f"Bot exited immediately (code {proc.returncode}): {out[-800:]}")
+        # Log start
+        try:
+            from utils.logger import log_action
+            log_action("info", "bot_start", f"Bot started mode {mode} pid {proc.pid}", extra={"mode": mode, "pid": proc.pid})
+        except Exception:
+            pass
+        return JSONResponse({"status": "started", "pid": proc.pid, "mode": mode, "log_file": str(_bot_log_file)})
     except HTTPException:
         raise
     except Exception as e:
@@ -703,7 +755,7 @@ async def api_bot_start(request: Request):
 
 @app.post("/api/bot/stop")
 async def api_bot_stop():
-    global _bot_process, _bot_start_time, _bot_mode
+    global _bot_process, _bot_start_time, _bot_mode, _bot_log_file, _bot_thread
     if not _bot_is_running():
         return JSONResponse({"status": "not running"})
     try:
@@ -717,9 +769,115 @@ async def api_bot_stop():
             except Exception:
                 pass
         _bot_read_logs()
+        # Give drain thread a moment
+        await asyncio.sleep(0.3)
+        try:
+            from utils.logger import log_action
+            log_action("info", "bot_stop", f"Bot stopped pid {proc.pid}", extra={"pid": proc.pid})
+        except Exception:
+            pass
         _bot_process = None
         _bot_start_time = None
         _bot_mode = None
+        _bot_log_file = None
+        _bot_thread = None
         return JSONResponse({"status": "stopped"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/logs")
+async def api_logs(level: str = None, action: str = None, fix_needed: bool = None, mission_id: str = None, tail: int = 200, search: str = None):
+    """Query structured logs from logs/actions.jsonl with filters. Also includes bot logs tail if needed."""
+    try:
+        from pathlib import Path as _P
+        actions_path = PROJECT_ROOT / "logs" / "actions.jsonl"
+        prom_path = PROJECT_ROOT / "logs" / "prometheus.log"
+        results = []
+        # Read actions.jsonl (JSON per line)
+        if actions_path.exists():
+            try:
+                lines = actions_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+                # Tail first for performance
+                if tail and len(lines) > tail * 3:
+                    lines = lines[-tail*3:]
+                for line in lines[-5000:]:  # cap
+                    line=line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    # Filters
+                    if level and obj.get("level","").lower() != level.lower():
+                        continue
+                    if action and obj.get("action","") != action:
+                        continue
+                    if fix_needed is not None:
+                        # fix_needed param is bool string
+                        if isinstance(fix_needed, str):
+                            fix_needed = fix_needed.lower() in ("true","1","yes")
+                        if bool(obj.get("fix_needed")) != bool(fix_needed):
+                            continue
+                    if mission_id and str(obj.get("mission_id","")) != str(mission_id):
+                        continue
+                    if search and search.lower() not in json.dumps(obj).lower() and search.lower() not in obj.get("msg","").lower():
+                        continue
+                    results.append(obj)
+                # Tail
+                if tail:
+                    results = results[-tail:]
+            except Exception as e:
+                return JSONResponse({"error": str(e), "logs": []})
+        # Also include bot logs tail if requested and no action filter
+        bot_logs = list(_bot_logs)[-50:] if not action else []
+        return JSONResponse({"logs": results, "count": len(results), "bot_logs": bot_logs, "running": _bot_is_running()})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/logs/fixes")
+async def api_logs_fixes(hours: int = 24, tail: int = 100):
+    """Aggregated fixes needed in last N hours."""
+    try:
+        from datetime import datetime, timedelta, timezone
+        cutoff = time.time() - hours*3600
+        actions_path = PROJECT_ROOT / "logs" / "actions.jsonl"
+        fixes = []
+        counts: Dict[str, int] = {}
+        if actions_path.exists():
+            for line in actions_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-5000:]:
+                line=line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if not obj.get("fix_needed"):
+                    continue
+                # Parse ts
+                ts_str = obj.get("ts","")
+                try:
+                    # ts is like 2026-08-26T... assume UTC
+                    # Use file mtime fallback if parse fails
+                    # Simple: check if within hours via log file mtime not precise, so include all recent fix_needed
+                    # For now, include all fix_needed and filter by if we can parse
+                    if ts_str:
+                        # Try to parse ISO
+                        try:
+                            dt = datetime.fromisoformat(ts_str.replace("Z",""))
+                            ts_epoch = dt.timestamp()
+                            if ts_epoch < cutoff:
+                                continue
+                        except Exception:
+                            pass
+                    fixes.append(obj)
+                    act = obj.get("action","general")
+                    counts[act] = counts.get(act, 0) + 1
+                except Exception:
+                    continue
+        fixes = fixes[-tail:]
+        fixes.reverse()  # newest first
+        return JSONResponse({"fixes": fixes, "count": len(fixes), "by_action": counts, "hours": hours})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
