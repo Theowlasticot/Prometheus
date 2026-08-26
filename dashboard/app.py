@@ -1,7 +1,11 @@
 import asyncio
+import collections
 import configparser
 import json
 import os
+import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Dict, Any
 
@@ -585,5 +589,137 @@ async def api_assets_sync(request: Request):
         return JSONResponse(result)
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# --- Bot control (subprocess) ---
+_bot_process: subprocess.Popen | None = None
+_bot_logs: collections.deque = collections.deque(maxlen=500)
+_bot_start_time: float | None = None
+_bot_mode: str | None = None
+
+def _bot_is_running() -> bool:
+    global _bot_process
+    if _bot_process is None:
+        return False
+    return _bot_process.poll() is None
+
+def _bot_read_logs():
+    global _bot_process
+    if _bot_process is None or _bot_process.stdout is None:
+        return
+    try:
+        # Non-blocking read available lines
+        import select
+        # fallback: try read without blocking
+        while True:
+            line = _bot_process.stdout.readline()
+            if not line:
+                break
+            if isinstance(line, bytes):
+                line = line.decode(errors="ignore")
+            _bot_logs.append(line.rstrip())
+            if len(_bot_logs) > 500:
+                _bot_logs.popleft()
+    except Exception:
+        pass
+
+@app.get("/api/bot/status")
+async def api_bot_status():
+    running = _bot_is_running()
+    pid = _bot_process.pid if _bot_process and running else None
+    uptime = int(time.time() - _bot_start_time) if _bot_start_time and running else 0
+    return JSONResponse({
+        "running": running,
+        "pid": pid,
+        "mode": _bot_mode if running else None,
+        "uptime": uptime,
+        "logs_tail": list(_bot_logs)[-20:],
+        "log_count": len(_bot_logs)
+    })
+
+@app.get("/api/bot/logs")
+async def api_bot_logs():
+    # Drain any pending output
+    _bot_read_logs()
+    return JSONResponse({"logs": list(_bot_logs), "count": len(_bot_logs), "running": _bot_is_running()})
+
+@app.post("/api/bot/start")
+async def api_bot_start(request: Request):
+    global _bot_process, _bot_start_time, _bot_mode
+    if _bot_is_running():
+        raise HTTPException(status_code=409, detail=f"Bot already running pid={_bot_process.pid} mode={_bot_mode}")
+    try:
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        mode = str(body.get("mode", "1")).strip() or "1"
+        if mode not in ("1", "2", "3"):
+            raise HTTPException(status_code=400, detail="mode must be 1,2,3")
+        # Use venv python if exists else sys.executable
+        venv_python = PROJECT_ROOT / "venv" / "bin" / "python"
+        py = str(venv_python) if venv_python.exists() else sys.executable
+        env = os.environ.copy()
+        # Ensure unbuffered
+        env["PYTHONUNBUFFERED"] = "1"
+        # Start Main.py with mode input via stdin
+        # Main.py show_menu reads input(), so we feed mode + newline
+        proc = subprocess.Popen(
+            [py, "-u", "Main.py"],
+            cwd=str(PROJECT_ROOT),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
+        try:
+            # Feed menu choice
+            proc.stdin.write(mode + "\n")
+            proc.stdin.flush()
+        except Exception:
+            pass
+        _bot_process = proc
+        _bot_start_time = time.time()
+        _bot_mode = mode
+        # Give it a moment to start
+        await asyncio.sleep(0.5)
+        # Check if immediately exited (e.g., bad credentials)
+        if proc.poll() is not None:
+            out = ""
+            try:
+                out = proc.stdout.read() or ""
+            except Exception:
+                pass
+            _bot_logs.extend(out.splitlines()[-50:])
+            raise HTTPException(status_code=500, detail=f"Bot exited immediately (code {proc.returncode}): {out[-500:]}")
+        return JSONResponse({"status": "started", "pid": proc.pid, "mode": mode})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/bot/stop")
+async def api_bot_stop():
+    global _bot_process, _bot_start_time, _bot_mode
+    if not _bot_is_running():
+        return JSONResponse({"status": "not running"})
+    try:
+        proc = _bot_process
+        proc.terminate()
+        try:
+            await asyncio.to_thread(proc.wait, timeout=5)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        _bot_read_logs()
+        _bot_process = None
+        _bot_start_time = None
+        _bot_mode = None
+        return JSONResponse({"status": "stopped"})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

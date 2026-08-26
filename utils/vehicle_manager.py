@@ -200,18 +200,28 @@ class VehicleManager:
             if rule["regex"].search(requirement_text):
                 found_ids.add(rule["id"])
                 
-        # 3. Fuzzy Fallback (Only if no direct match)
+        # 3. Fuzzy Fallback (Only if no direct match) — bounded to avoid over-matching
         if not found_ids:
-            if clean_req + "s" in self.index:
-                found_ids.update(self.index[clean_req + "s"])
-            elif clean_req.endswith('s') and clean_req[:-1] in self.index:
-                found_ids.update(self.index[clean_req[:-1]])
+            if len(clean_req) >= 3:
+                if clean_req + "s" in self.index:
+                    found_ids.update(self.index[clean_req + "s"])
+                elif clean_req.endswith('s') and clean_req[:-1] in self.index:
+                    found_ids.update(self.index[clean_req[:-1]])
             
-            if not found_ids:
+            if not found_ids and len(clean_req) >= 4:
                 for key, ids in self.index.items():
+                    # Require substantial overlap, not just substring of short word
+                    if len(key) < 4:
+                        continue
                     if clean_req in key or key in clean_req:
+                        # Avoid matching very short substrings like "boat" in "motorboat" is ok, but "engine" in "search engine" not
+                        # Require at least 4 chars overlap or ratio
+                        if len(clean_req) < 4 or len(key) < 4:
+                            continue
                         valid_fuzzy = [vid for vid in ids if not self.vehicle_properties.get(vid, {}).get('is_matchless', False)]
                         found_ids.update(valid_fuzzy)
+                # Also handle is_matchless for direct/regex: if direct matched is_matchless, keep but warn
+                # (is_matchless vehicles like EMS Chief should still be dispatchable via direct)
 
         return list(found_ids)
 

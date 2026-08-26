@@ -61,6 +61,7 @@
       <button data-tab="stats" class="tab-btn px-4 py-1.5 rounded-lg bg-slate-800 text-white text-sm font-medium shadow">Stats</button>
       <button data-tab="missions" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Missions</button>
       <button data-tab="config" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Config & Settings</button>
+      <button data-tab="bot" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Bot Control</button>
     </div>
 
     <section id="panel-stats" class="tab-panel">
@@ -282,6 +283,41 @@ uvicorn dashboard.app:app --host 127.0.0.1 --port 8000 --reload</pre>
           </div>
         </div>
       </div>
+    </section>
+
+    <section id="panel-bot" class="tab-panel hidden">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="rounded-2xl border border-emerald-500/20 bg-slate-900/60 p-5 ring-1 ring-emerald-500/10">
+          <h3 class="text-sm font-semibold mb-1">Bot Control <span class="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/20">dashboard</span></h3>
+          <p class="text-xs text-slate-500 mb-4">Start/Stop <code>Main.py</code> without CLI. Uses <code>venv/bin/python</code> if present, else system python. No token, local only.</p>
+          <div class="flex flex-col gap-3">
+            <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Mode</span>
+              <select id="bot-mode" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono">
+                <option value="1">1 — Missions & Transport [Def]</option>
+                <option value="2">2 — Missions Only</option>
+                <option value="3">3 — Transport Only</option>
+              </select>
+            </label>
+            <div class="flex gap-2">
+              <button onclick="startBot()" class="flex-1 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-sm font-semibold">Start Bot</button>
+              <button onclick="stopBot()" class="flex-1 px-4 py-2.5 rounded-xl bg-red-500/90 hover:bg-red-500 text-white text-sm font-semibold">Stop</button>
+            </div>
+            <div class="rounded-xl bg-slate-950 border border-slate-800 p-3 text-xs font-mono">
+              <div>Status: <span id="bot-status" class="text-slate-400">—</span></div>
+              <div>PID: <span id="bot-pid" class="text-slate-400">—</span> Mode: <span id="bot-mode-status" class="text-slate-400">—</span> Uptime: <span id="bot-uptime" class="text-slate-400">—</span></div>
+            </div>
+            <p id="bot-msg" class="text-xs font-mono text-slate-500"></p>
+          </div>
+        </div>
+        <div class="lg:col-span-2 rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold">Logs <span class="text-xs font-normal text-slate-500">(last 500, tail 50 shown)</span></h3>
+            <button onclick="refreshBotLogs()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs">Refresh</button>
+          </div>
+          <pre id="bot-logs" class="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs font-mono text-slate-300 overflow-auto max-h-[420px] whitespace-pre-wrap">— not running —</pre>
+        </div>
+      </div>
+      <div class="mt-4 rounded-xl bg-slate-950 border border-slate-800 p-3 text-[11px] font-mono text-slate-500">Tip: if <code>Start</code> fails immediately, check credentials in <b>Config → Credentials</b> and ensure <code>venv/bin/python -m playwright install</code> was run. Use <code>lsof -ti:8000 | xargs kill -9</code> if dashboard port busy.</div>
     </section>
 
     <p class="text-center text-[11px] font-mono text-slate-600 mt-10">Prometheus V3 · <a href="https://github.com/Theowlasticot/Prometheus" class="underline decoration-slate-700 hover:text-slate-400">Theowlasticot/Prometheus</a> · Inspired by MissionchiefBot-X & Mission-Chief.Bot</p>

@@ -6,10 +6,47 @@ from pathlib import Path
 from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import VehicleManager
 from data.config_settings import get_share_alliance, get_process_alliance, get_server_code, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits
+from utils.building_data import load_building_data, has_expansion
 
 # Trailer types that require towing vehicle (cannot dispatch alone)
 TRAILER_IDS = {7, 31, 35, 36, 37, 38, 41, 46, 59}  # water trailer, foam trailer, etc. — approximate US
-# Will be refined via VehicleManager capability TOW
+# Vehicle locking to avoid double-dispatch across missions (inspired by NatesHonor)
+_LOCKED_VEHICLES: dict[str, str] = {}  # vehicle_id -> mission_id
+
+def is_vehicle_locked(vid: str) -> bool:
+    return vid in _LOCKED_VEHICLES
+
+def lock_vehicle(vid: str, mission_id: str):
+    _LOCKED_VEHICLES[vid] = mission_id
+
+def free_up_vehicles(mission_id: str):
+    to_free = [vid for vid, mid in _LOCKED_VEHICLES.items() if mid == mission_id]
+    for vid in to_free:
+        del _LOCKED_VEHICLES[vid]
+
+def free_all_vehicles():
+    _LOCKED_VEHICLES.clear()
+
+async def get_vehicle_distances(page, vehicle_ids: list[str]) -> dict[str, float]:
+    """Read #vehicle_sort_{id} sortvalue as distance, like NatesHonor vehicles.py:8."""
+    distances = {}
+    for vid in vehicle_ids:
+        try:
+            # Try sortvalue attribute
+            el = await page.query_selector(f'#vehicle_sort_{vid}')
+            if el:
+                val = await el.get_attribute('sortvalue')
+                if val is not None:
+                    try:
+                        distances[vid] = float(val.replace(',', '.'))
+                        continue
+                    except ValueError:
+                        pass
+            # Fallback: try data attribute or text
+            distances[vid] = float('inf')
+        except Exception:
+            distances[vid] = float('inf')
+    return distances
 
 # Dynamic manager — code from config, cache-aware (assets_cache/{code} or bundled us)
 def _create_manager():
@@ -201,25 +238,57 @@ async def navigate_and_dispatch(browsers):
         current_water = 0
         current_foam = 0
 
+        # Building expansion gating (if mission_data captured it)
+        required_exps = data.get("required_expansions", [])
+        if required_exps:
+            bdata = load_building_data()
+            missing_exp = [e for e in required_exps if not has_expansion(bdata, e)]
+            if missing_exp:
+                display_warning(f"Skipping {mission_id} missing expansions {missing_exp}")
+                continue
+
         for requirement in vehicle_requirements:
             req_name = requirement["name"]
             req_count = requirement["count"]
             
             if "ambulance" in req_name.lower(): continue
 
-            valid_ids = await get_valid_ids_for_type(req_name) 
+            valid_ids = await get_valid_ids_for_type(req_name)
+            # Distance sort: nearest first (like NatesHonor vehicles.py)
+            # Build distance map for valid_ids
+            try:
+                dist_map = await get_vehicle_distances(page, valid_ids)
+                # Sort valid_ids by distance
+                valid_ids_sorted = sorted(valid_ids, key=lambda vid: dist_map.get(vid, float('inf')))
+            except Exception:
+                valid_ids_sorted = valid_ids
+            # Also sort available elements by distance for this requirement
+            # Create distance-sorted list of (cb, v_id)
+            sorted_cbs = []
+            for cb in available_vehicles_elements:
+                try:
+                    v_id_tmp = await cb.get_attribute("value")
+                    if v_id_tmp in valid_ids:
+                        d = dist_map.get(v_id_tmp, float('inf')) if 'dist_map' in locals() else float('inf')
+                        sorted_cbs.append((d, cb, v_id_tmp))
+                except Exception:
+                    continue
+            sorted_cbs.sort(key=lambda x: x[0])
             selected = 0
             
-            for cb in available_vehicles_elements:
-                v_id = await cb.get_attribute("value")
-                is_checked = await cb.is_checked()
+            for _, cb, v_id in sorted_cbs:
+                try:
+                    is_checked = await cb.is_checked()
+                except Exception:
+                    is_checked = False
                 
-                if v_id in used_vehicle_ids or is_checked: 
-                    if is_checked and v_id not in used_vehicle_ids: 
+                if v_id in used_vehicle_ids or is_checked or is_vehicle_locked(v_id):
+                    if is_checked and v_id not in used_vehicle_ids:
                         used_vehicle_ids.append(v_id)
+                        lock_vehicle(v_id, mission_id)
                     continue
                 
-                if v_id in valid_ids:
+                if v_id in valid_ids_sorted:
                     # SMART QUANTITY LOGIC
                     sys_id = USER_TO_SYSTEM_MAP.get(str(v_id))
                     
@@ -233,6 +302,7 @@ async def navigate_and_dispatch(browsers):
 
                     await click_vehicle(page, cb)
                     used_vehicle_ids.append(v_id)
+                    lock_vehicle(v_id, mission_id)
                     
                     # Fix: support both US (water_amount) and German (wasser_amount) attributes
                     w_raw = await cb.get_attribute("water_amount") or await cb.get_attribute("wasser_amount") or "0"
