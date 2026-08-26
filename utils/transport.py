@@ -8,20 +8,18 @@ def _parse_distance(text):
     """Parse distance from text like '5.3 km', '3.2 mi', 'Distance: 5.3 km (Free: 2)' handling commas."""
     if not text:
         return None
-    # Find first number like 1,200 or 1.200 or 5.3
     m = re.search(r'([\d.,]+)\s*(km|mi|miles)?', text.lower())
     if not m:
         return None
-    num = m.group(1).replace(',', '')
-    # Handle comma decimal like "5,3 km" -> "5.3"
-    # If original contains comma and dot logic: already removed commas, but "5,3" becomes "53" -> need special
-    # Fallback: if original had "5,3" pattern, try replacing comma with dot before stripping
-    if ',' in text and '.' not in text:
-        num2 = m.group(1).replace(',', '.')
-        try:
-            return float(num2)
-        except ValueError:
-            pass
+    raw = m.group(1).strip()
+    # Handle comma decimal vs thousand
+    if ',' in raw and '.' not in raw:
+        if re.search(r',\d{3}$', raw):
+            num = raw.replace(',', '')
+        else:
+            num = raw.replace(',', '.')
+    else:
+        num = raw.replace(',', '')
     try:
         return float(num)
     except ValueError:

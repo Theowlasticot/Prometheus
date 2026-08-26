@@ -236,34 +236,44 @@ def sync_code(code: str, cache_dir: str = "assets_cache", manifest_url: str = No
             save_manifest_cache(manifest_cache, cache_dir)
         return {"code": code, "fetched": 0, "total": len(want), "checked": len(want), "message": "Already up-to-date (md5 match, no download needed)", "cached_files": len(list(code_dir.glob("*.mscv")))}
 
-    # Fetch with httpx sync (sequential with small concurrency via simple loop; for true concurrency use asyncio but keep sync for simplicity)
-    # We'll do sequential but with timeout, could be 115 reqs ~ 10s. Use httpx with limited concurrency via ThreadPool?
+    # Fetch with concurrency via ThreadPool (httpx.Client is thread-safe for separate clients per thread)
     fetched = 0
     errors = []
+    # Use ThreadPool for concurrency (httpx sync client per thread)
+    import concurrent.futures
+    def _fetch_one(e):
+        url = e["url"]
+        fname = Path(url).name
+        fpath = code_dir / fname
+        try:
+            with httpx.Client(timeout=20, follow_redirects=True) as client:
+                r = client.get(url, timeout=15)
+                r.raise_for_status()
+                raw = r.text
+                clean = sanitize_raw_json(raw)
+                json.loads(clean)
+                tmp = code_dir / f"{fname}.tmp"
+                tmp.write_text(clean, encoding="utf-8")
+                tmp.replace(fpath)
+                return (url, e.get("md5"), None)
+        except Exception as ex:
+            return (url, None, str(ex))
+
     try:
-        with httpx.Client(timeout=20, follow_redirects=True) as client:
-            for e in to_fetch:
-                url = e["url"]
-                fname = Path(url).name
-                fpath = code_dir / fname
-                try:
-                    r = client.get(url, timeout=15)
-                    r.raise_for_status()
-                    raw = r.text
-                    clean = sanitize_raw_json(raw)
-                    # Validate JSON
-                    json.loads(clean)
-                    tmp = code_dir / f"{fname}.tmp"
-                    tmp.write_text(clean, encoding="utf-8")
-                    tmp.replace(fpath)
-                    manifest_cache[url] = e.get("md5")
+        # Limit concurrency
+        max_workers = max(1, min(concurrency, len(to_fetch)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_fetch_one, e): e for e in to_fetch}
+            for fut in concurrent.futures.as_completed(futures):
+                url, md5, err = fut.result()
+                if err:
+                    errors.append(f"{Path(url).name}: {err}")
+                    display_warning(f"Failed {Path(url).name}: {err}")
+                else:
+                    manifest_cache[url] = md5
                     fetched += 1
                     if fetched % 20 == 0:
                         display_info(f"Sync {code}: {fetched}/{len(to_fetch)} fetched")
-                except Exception as ex:
-                    errors.append(f"{fname}: {ex}")
-                    display_warning(f"Failed {fname}: {ex}")
-                    continue
     except Exception as e:
         return {"error": str(e), "code": code, "fetched": fetched, "total": len(want), "errors": errors}
 

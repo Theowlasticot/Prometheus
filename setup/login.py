@@ -19,14 +19,22 @@ async def login_single(username, password, headless, thread_id, delay, playwrigh
         await page.fill('input[name="user[password]"]', password)
         await page.click('input[type="submit"]')
         await page.wait_for_load_state("domcontentloaded", timeout=15000)
-        # i18n: check multiple language error strings
-        error_loc = page.locator('text=Invalid email or password, text=Ungültige E-Mail, text=Adresse e-mail invalide, text=Ongeldig e-mailadres')
-        try:
-            if await error_loc.is_visible(timeout=5000):
+        # Wait a bit for redirect or error
+        await page.wait_for_timeout(2000)
+        # i18n: check still on sign_in page means failure (covers all languages)
+        if "/users/sign_in" in page.url:
+            # Try to find any error alert
+            try:
+                error_loc = page.locator('text=Invalid email or password, text=Ungültige, text=Adresse e-mail invalide, text=Ongeldig, text=Credenziali non valide, text=Nieprawidłowy, text=Neplatný, text=Ugyldig, text=Virheellinen, text=Ogiltig, text=Ugyldig, text=잘못된, text=無効な, text=Credenciales no válidas')
+                if await error_loc.is_visible(timeout=3000):
+                    await browser.close()
+                    return "Failure", f"Thread {thread_id}: Invalid email or password", None
+                # Generic: if still on sign_in, assume failure
                 await browser.close()
-                return "Failure", f"Thread {thread_id}: Invalid email or password", None
-        except Exception:
-            pass
+                return "Failure", f"Thread {thread_id}: Login failed (still on sign_in)", None
+            except Exception:
+                await browser.close()
+                return "Failure", f"Thread {thread_id}: Login failed", None
 
         return "Success", thread_id, browser
 

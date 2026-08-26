@@ -61,8 +61,11 @@ async def gather_building_data(browsers, num_threads=1):
             num_threads = len(building_ids)
         if num_threads < 1:
             num_threads = 1
-        # Simple sequential for now, with small delay to avoid ban
-        for bid in building_ids[:100]:
+        # Sequential with delay to avoid ban; handle up to 500 buildings (was 100 truncated)
+        limit = min(len(building_ids), 500)
+        if len(building_ids) > 500:
+            display_warning(f"Found {len(building_ids)} buildings, limiting to 500 for this cycle")
+        for bid in building_ids[:limit]:
             try:
                 await page.goto(f"{base}/buildings/{bid}", timeout=30000)
                 await page.wait_for_load_state("domcontentloaded", timeout=10000)
