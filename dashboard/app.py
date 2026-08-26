@@ -66,6 +66,9 @@ def _read_config_dict(redact: bool = False) -> Dict[str, Any]:
         out.setdefault("mission_settings", {})
         out.setdefault("credentials", {})
         out.setdefault("server_settings", {})
+        out.setdefault("transport_settings", {})
+        out.setdefault("dispatch_settings", {})
+        out.setdefault("mission_filter", {})
     except Exception:
         pass
     if redact and "credentials" in out and "password" in out["credentials"]:
@@ -207,6 +210,14 @@ def _get_stats() -> Dict[str, Any]:
     server_code = cfg_dict.get("server_settings", {}).get("code", "us")
     server_auto = cfg_dict.get("server_settings", {}).get("auto_update", "true")
     server_interval = cfg_dict.get("server_settings", {}).get("refresh_interval", "3600")
+    allow_hosp = cfg_dict.get("transport_settings", {}).get("allow_alliance_hospitals", "true")
+    allow_cells = cfg_dict.get("transport_settings", {}).get("allow_alliance_cells", "true")
+    max_dist = cfg_dict.get("transport_settings", {}).get("max_distance", "0")
+    min_pct = cfg_dict.get("dispatch_settings", {}).get("min_percent", "70")
+    use_aar = cfg_dict.get("dispatch_settings", {}).get("use_aar", "false")
+    ignore_storm = cfg_dict.get("mission_filter", {}).get("ignore_storm", "false")
+    ignore_event = cfg_dict.get("mission_filter", {}).get("ignore_event", "false")
+    min_credits = cfg_dict.get("mission_filter", {}).get("min_credits", "0")
 
     # File mtimes
     def mtime(p: Path):
@@ -259,6 +270,14 @@ def _get_stats() -> Dict[str, Any]:
             "server_code": server_code,
             "server_auto": str(server_auto).lower() == "true",
             "server_interval": server_interval,
+            "allow_alliance_hospitals": str(allow_hosp).lower() == "true",
+            "allow_alliance_cells": str(allow_cells).lower() == "true",
+            "max_distance": int(max_dist) if str(max_dist).isdigit() else 0,
+            "min_percent": int(min_pct) if str(min_pct).isdigit() else 70,
+            "use_aar": str(use_aar).lower() == "true",
+            "ignore_storm": str(ignore_storm).lower() == "true",
+            "ignore_event": str(ignore_event).lower() == "true",
+            "min_credits": int(min_credits) if str(min_credits).isdigit() else 0,
         },
         "files": {
             "mission_data_mtime": mtime(mission_path),
@@ -300,7 +319,7 @@ async def api_put_config(request: Request):
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="Expected JSON object")
         # Validate allowed sections
-        allowed_sections = {"credentials", "browser_settings", "personnel_settings", "delays", "mission_settings", "server_settings"}
+        allowed_sections = {"credentials", "browser_settings", "personnel_settings", "delays", "mission_settings", "server_settings", "transport_settings", "dispatch_settings", "mission_filter"}
         for sec in body.keys():
             if sec not in allowed_sections:
                 raise HTTPException(status_code=400, detail=f"Unknown section: {sec}")
@@ -381,6 +400,47 @@ async def api_put_config(request: Request):
                     # allow simple dirname like assets_cache or data/cache — but prevent traversal
                     if ".." in cd or cd.startswith("/"):
                         raise HTTPException(status_code=400, detail="cache_dir invalid")
+        if "transport_settings" in body:
+            ts = body["transport_settings"]
+            for k in ("allow_alliance_hospitals", "allow_alliance_cells"):
+                if k in ts:
+                    v = str(ts[k]).lower()
+                    if v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+                        raise HTTPException(status_code=400, detail=f"{k} must be boolean")
+            if "max_distance" in ts:
+                try:
+                    v = int(ts["max_distance"])
+                    if v < 0 or v > 1000:
+                        raise HTTPException(status_code=400, detail="max_distance must be 0-1000")
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="max_distance must be integer")
+        if "dispatch_settings" in body:
+            ds = body["dispatch_settings"]
+            if "min_percent" in ds:
+                try:
+                    v = int(ds["min_percent"])
+                    if v < 0 or v > 100:
+                        raise HTTPException(status_code=400, detail="min_percent must be 0-100")
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="min_percent must be integer")
+            if "use_aar" in ds:
+                v = str(ds["use_aar"]).lower()
+                if v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+                    raise HTTPException(status_code=400, detail="use_aar must be boolean")
+        if "mission_filter" in body:
+            mf = body["mission_filter"]
+            for k in ("ignore_storm", "ignore_event"):
+                if k in mf:
+                    v = str(mf[k]).lower()
+                    if v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+                        raise HTTPException(status_code=400, detail=f"{k} must be boolean")
+            if "min_credits" in mf:
+                try:
+                    v = int(mf["min_credits"])
+                    if v < 0 or v > 100000:
+                        raise HTTPException(status_code=400, detail="min_credits must be 0-100000")
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="min_credits must be integer")
         _write_config_dict(body)
         # If server code changed, hint to sync — don't auto-sync here, UI will call sync
         return JSONResponse({"status": "ok", "config": _read_config_dict(redact=True)})

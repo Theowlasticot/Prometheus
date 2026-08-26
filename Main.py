@@ -12,7 +12,8 @@ from utils.mission_data import check_and_grab_missions
 from utils.pretty_print import display_info, display_error, display_message
 from utils.transport import handle_transport_requests
 from utils.vehicle_data import gather_vehicle_data
-from utils.personnel_manager import manage_personnel  # Added import
+from utils.personnel_manager import manage_personnel
+from utils.building_data import gather_building_data
 
 async def transport_logic(browser):
     display_info("Starting transportation logic.")
@@ -54,11 +55,19 @@ async def mission_logic(browsers_for_missions):
             # --- Vehicle Data Refresh Logic ---
             # Refresh every 50 loops OR if the file doesn't exist
             vehicle_data_path = os.path.join(project_root, "data", "vehicle_data.json")
+            building_data_path = os.path.join(project_root, "data", "building_data.json")
             should_refresh_vehicles = not os.path.exists(vehicle_data_path) or (loop_count % 50 == 0)
+            should_refresh_buildings = not os.path.exists(building_data_path) or (loop_count % 100 == 0)
             
             if should_refresh_vehicles:
                 display_info(f"Refreshing vehicle data (Loop {loop_count})...")
                 await gather_vehicle_data(browsers_for_missions, len(browsers_for_missions))
+            if should_refresh_buildings:
+                display_info(f"Refreshing building data (Loop {loop_count})...")
+                try:
+                    await gather_building_data(browsers_for_missions, len(browsers_for_missions))
+                except Exception as e:
+                    display_error(f"Building data refresh failed: {e}")
             
             # --- Standard Mission Loop ---
             # Grab missions

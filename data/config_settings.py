@@ -129,3 +129,118 @@ def get_server_manifest_url():
         return u.strip() or 'https://raw.githubusercontent.com/cfHxqA/Mission-Chief.Bot/master/Assets/Server.json'
     except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
         return 'https://raw.githubusercontent.com/cfHxqA/Mission-Chief.Bot/master/Assets/Server.json'
+
+def get_allow_alliance_hospitals():
+    _reload()
+    try:
+        return config.getboolean('transport_settings', 'allow_alliance_hospitals', fallback=True)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return True
+
+def get_allow_alliance_cells():
+    _reload()
+    try:
+        return config.getboolean('transport_settings', 'allow_alliance_cells', fallback=True)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return True
+
+def get_max_distance():
+    _reload()
+    try:
+        v = config.getint('transport_settings', 'max_distance', fallback=0)
+        return max(0, v)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return 0
+
+def get_min_percent():
+    _reload()
+    try:
+        v = config.getint('dispatch_settings', 'min_percent', fallback=70)
+        return max(0, min(100, v))
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return 70
+
+def get_use_aar():
+    _reload()
+    try:
+        return config.getboolean('dispatch_settings', 'use_aar', fallback=False)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return False
+
+def get_ignore_storm():
+    _reload()
+    try:
+        return config.getboolean('mission_filter', 'ignore_storm', fallback=False)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return False
+
+def get_ignore_event():
+    _reload()
+    try:
+        return config.getboolean('mission_filter', 'ignore_event', fallback=False)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return False
+
+def get_min_credits():
+    _reload()
+    try:
+        v = config.getint('mission_filter', 'min_credits', fallback=0)
+        return max(0, v)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return 0
+
+def get_server_url():
+    _reload()
+    code = get_server_code()
+    mapping = {
+        "us": "https://www.missionchief.com/",
+        "uk": "https://www.missionchief.co.uk/",
+        "de": "https://www.leitstellenspiel.de/",
+        "fr": "https://www.operateur112.fr/",
+        "nl": "https://www.meldkamerspel.com/",
+        "au": "https://www.missionchief-australia.com/",
+        "cz": "https://www.operacni-stredisko.cz/",
+        "dk": "https://www.alarmcentral-spil.dk/",
+        "fi": "https://www.hatakeskuspeli.com/",
+        "it": "https://www.operatore112.it/",
+        "pl": "https://www.operatorratunkowy.pl/",
+        "pt": "https://www.jogo-operador112.com/",
+        "se": "https://www.larmcentralen-spelet.se/",
+        "no": "https://www.nodsentralspillet.com/",
+        "kr": "https://www.missionchief-korea.com/",
+        "es": "https://www.centro-de-mando.es/",
+        "jp": "https://www.missionchief-japan.com/",
+        "ro": "https://www.jocdispecerat112.com/",
+        "ru": "https://www.dispetcher112.ru/",
+    }
+    return mapping.get(code, "https://www.missionchief.com/")
+
+# Language helpers (alliance tags, personnel keywords, distance labels)
+ALLIANCE_TAGS = {
+    "us": ["[alliance]"], "uk": ["[alliance]"], "au": ["[alliance]"],
+    "de": ["[verband]", "[alliance]"], "fr": ["[alliance]", "[alliance]"],
+    "nl": ["[alliantie]"], "pl": ["[alliance]"], "it": ["[alliance]"],
+    "cz": ["[alliance]"], "dk": ["[alliance]"], "fi": ["[alliance]"],
+    "se": ["[alliance]"], "no": ["[alliance]"], "kr": ["[alliance]"],
+    "es": ["[alianza]"], "pt": ["[aliança]"], "jp": ["[alliance]"],
+    "ro": ["[alliance]"], "ru": ["[alliance]"],
+}
+
+def is_alliance_mission_name(name: str) -> bool:
+    _reload()
+    n = (name or "").lower()
+    # Generic: any bracketed prefix likely alliance
+    # Check known tags per code plus generic bracket
+    code = get_server_code()
+    tags = ALLIANCE_TAGS.get(code, ["[alliance]"])
+    if any(t in n for t in tags):
+        return True
+    # Fallback: starts with [ and contains alliance-like word
+    if n.strip().startswith("["):
+        # consider any [xxx] as alliance if not mission-specific? Conservative: only if length < 30
+        if "]" in n[:30]:
+            return True
+    return False
+
+PERSONNEL_KEYWORDS = ["personnel", "personal", "mitarbeiter", "mitarbeiter", "personnel", "personnel", "personeel", "personel", "personnel", "personnel"]
+# Used for i18n detection in personnel manager

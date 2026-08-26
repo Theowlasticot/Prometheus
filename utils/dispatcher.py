@@ -4,7 +4,11 @@ import os
 
 from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import VehicleManager
-from data.config_settings import get_share_alliance, get_process_alliance, get_server_code
+from data.config_settings import get_share_alliance, get_process_alliance, get_server_code, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits
+
+# Trailer types that require towing vehicle (cannot dispatch alone)
+TRAILER_IDS = {7, 31, 35, 36, 37, 38, 41, 46, 59}  # water trailer, foam trailer, etc. — approximate US
+# Will be refined via VehicleManager capability TOW
 
 # Dynamic manager — code from config, cache-aware (assets_cache/{code} or bundled us)
 def _create_manager():
@@ -55,12 +59,43 @@ async def navigate_and_dispatch(browsers):
     await load_vehicle_data(force=True)
     page = browsers[0].contexts[0].pages[0]
 
+    # Apply mission filters (storm/event/min_credits) before sorting
+    try:
+        ignore_storm = get_ignore_storm()
+        ignore_event = get_ignore_event()
+        min_credits = get_min_credits()
+    except Exception:
+        ignore_storm = False
+        ignore_event = False
+        min_credits = 0
+    filtered = {}
+    for mid, data in mission_data.items():
+        name = data.get("mission_name", "").lower()
+        credits = data.get("credits", 0) or 0
+        if ignore_storm and "storm" in name:
+            continue
+        if ignore_event and any(x in name for x in ["event", "storm surge", "civil unrest"]):
+            continue
+        if min_credits and credits < min_credits:
+            continue
+        filtered[mid] = data
+    if len(filtered) != len(mission_data):
+        display_info(f"Filtered {len(mission_data)-len(filtered)} missions (storm/event/credits)")
+        mission_data = filtered
+
+    # Sort by missing first, then credits per vehicle (more efficient), then credits
+    def _sort_key(item):
+        name = item[1].get("mission_name", "").lower()
+        is_missing = 1 if any(x in name for x in ["missing", "incomplete", "fehl", "unvollständig", "manquant"]) else 0
+        credits = item[1].get("credits", 0) or 0
+        vehicles = item[1].get("vehicles", [])
+        total_needed = sum(v.get("count",0) for v in vehicles) or 1
+        credits_per = credits / total_needed if total_needed else credits
+        return (is_missing, credits_per, credits)
+
     sorted_missions = sorted(
         mission_data.items(),
-        key=lambda item: (
-            1 if "missing" in item[1].get("mission_name", "").lower() or "incomplete" in item[1].get("mission_name", "").lower() else 0,
-            item[1].get("credits", 0)
-        ),
+        key=_sort_key,
         reverse=True
     )
 
@@ -74,8 +109,10 @@ async def navigate_and_dispatch(browsers):
         req_foam = data.get("foam_needed", 0)
         patients_count = data.get("patients", 0)
 
-        is_missing_mission = "missing" in mission_name.lower() or "incomplete" in mission_name.lower()
-        is_alliance_mission = "[alliance]" in mission_name.lower()
+        # i18n: missing/incomplete detection (en/de/fr/nl...)
+        name_lower = mission_name.lower()
+        is_missing_mission = any(x in name_lower for x in ["missing", "incomplete", "fehl", "unvollständig", "manquant", "incomplet"])
+        is_alliance_mission = is_alliance_mission_name(mission_name)
 
         if is_alliance_mission and not get_process_alliance():
             display_info(f"⏭️ Skipping Alliance Mission: {mission_name}")
@@ -84,7 +121,8 @@ async def navigate_and_dispatch(browsers):
         display_info(f"Checking mission: {mission_name} ({credits_val} Cr) (ID: {mission_id})")
 
         try:
-            await page.goto(f"https://www.missionchief.com/missions/{mission_id}")
+            base = get_server_url().rstrip("/")
+            await page.goto(f"{base}/missions/{mission_id}", timeout=30000)
             await page.wait_for_selector('#missionH1', timeout=5000)
         except Exception as e:
             display_error(f"Mission {mission_id} failed to load: {e}")
@@ -123,7 +161,23 @@ async def navigate_and_dispatch(browsers):
 
         # --- SELECT VEHICLES ---
         vehicle_requirements = data.get("vehicles", [])
-        available_vehicles_elements = await page.query_selector_all('input.vehicle_checkbox:visible')
+        # Filter S5 / disabled vehicles out — only available and not disabled
+        try:
+            available_vehicles_elements = await page.query_selector_all('input.vehicle_checkbox:visible:not(:disabled)')
+            # Fallback if selector unsupported, filter manually
+            if not available_vehicles_elements:
+                all_cbs = await page.query_selector_all('input.vehicle_checkbox:visible')
+                available_vehicles_elements = []
+                for cb in all_cbs:
+                    try:
+                        dis = await cb.get_attribute("disabled")
+                        if dis is None:
+                            # Also check parent tr disabled class
+                            available_vehicles_elements.append(cb)
+                    except Exception:
+                        available_vehicles_elements.append(cb)
+        except Exception:
+            available_vehicles_elements = await page.query_selector_all('input.vehicle_checkbox:visible')
         used_vehicle_ids = []
         
         current_water = 0
@@ -244,15 +298,84 @@ async def navigate_and_dispatch(browsers):
                     used_vehicle_ids.append(vid)
                     display_info(f"Resource Vehicle ({vid}): +{w}W / +{f}F")
 
-        # --- SEND ---
-        btn = await page.query_selector('#alert_btn')
-        if btn:
-            if len(used_vehicle_ids) == 0:
-                display_info(f"⛔ No vehicles selected for {mission_id}. Skipping dispatch click.")
-                continue
+        # --- TRAILER TOWING CHECK ---
+        # Ensure trailers have towing vehicles (Heavy Rescue, Utility, etc.)
+        try:
+            trailer_used = []
+            for vid in list(used_vehicle_ids):
+                sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
+                if sys_id in TRAILER_IDS:
+                    trailer_used.append(vid)
+            if trailer_used:
+                # Need towing vehicle for each trailer — try to find one
+                tow_needed = len(trailer_used)
+                tow_found = 0
+                # Towing vehicles are typically Heavy Rescue, Utility, Battalion, etc. (not trailers)
+                for cb in available_vehicles_elements:
+                    if tow_found >= tow_needed:
+                        break
+                    vid = await cb.get_attribute("value")
+                    if vid in used_vehicle_ids or await cb.is_checked():
+                        continue
+                    sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
+                    if sys_id and sys_id not in TRAILER_IDS:
+                        # Check if this vehicle can tow (heuristic: heavy rescue/utility/battalion)
+                        # For now accept any non-trailer that is valid for rescue/utility
+                        await click_vehicle(page, cb)
+                        used_vehicle_ids.append(vid)
+                        tow_found += 1
+                        display_info(f"Towing vehicle for trailer: {vid}")
+                if tow_found < tow_needed:
+                    display_warning(f"Trailer(s) {trailer_used} may lack towing vehicle ({tow_found}/{tow_needed})")
+        except Exception as e:
+            display_warning(f"Trailer check error: {e}")
 
-            await btn.click()
-            display_info(f"🚀 Dispatched mission {mission_id}")
+        # --- SEND ---
+        # Try AAR API first if enabled (faster, avoids checkbox flakiness), else click button
+        dispatched = False
+        if get_use_aar():
+            try:
+                base = get_server_url().rstrip("/")
+                # Use Playwright APIRequestContext via page.request
+                # POST to /missions/{id}/alarm with vehicle_ids[]
+                payload = {"vehicle_ids[]": used_vehicle_ids, "next_mission": "0"}
+                # page.request is available on page.context.request or page.request
+                req_ctx = page.request if hasattr(page, "request") else page.context.request
+                resp = await req_ctx.post(f"{base}/missions/{mission_id}/alarm", form=payload)
+                if resp.ok:
+                    display_info(f"🚀 Dispatched via AAR API {mission_id} ({len(used_vehicle_ids)} vehicles)")
+                    dispatched = True
+                else:
+                    display_warning(f"AAR dispatch failed {resp.status}: {await resp.text()[:200]} — falling back to click")
+            except Exception as e:
+                display_warning(f"AAR error {mission_id}: {e}")
+
+        if not dispatched:
+            btn = await page.query_selector('#alert_btn')
+            if btn:
+                if len(used_vehicle_ids) == 0:
+                    display_info(f"⛔ No vehicles selected for {mission_id}. Skipping dispatch click.")
+                    continue
+                try:
+                    is_disabled = await btn.get_attribute("disabled")
+                    if is_disabled is not None:
+                        display_warning(f"Dispatch button disabled for {mission_id}")
+                        continue
+                except Exception:
+                    pass
+                try:
+                    await btn.scroll_into_view_if_needed()
+                except Exception:
+                    await page.evaluate('(btn) => btn.scrollIntoView()', btn)
+                await btn.click()
+                # Verify dispatch succeeded (check for success alert or mission gone)
+                try:
+                    await page.wait_for_timeout(800)
+                except Exception:
+                    pass
+                display_info(f"🚀 Dispatched mission {mission_id} via click ({len(used_vehicle_ids)} vehicles)")
+            else:
+                display_warning(f"No dispatch button for {mission_id}")
 
 async def check_mission_requirements_global_percent(page, mission_data):
     checkboxes = await page.query_selector_all('input.vehicle_checkbox:visible')
@@ -292,13 +415,18 @@ async def check_mission_requirements_global_percent(page, mission_data):
     if total_needed == 0:
         return True, "Only EMS/Transport needed"
 
-    # Require at least 70% coverage to dispatch; avoids sending 1/7 vehicles
+    # Configurable threshold (default 70)
+    try:
+        min_pct = get_min_percent()
+    except Exception:
+        min_pct = 70
+    ratio = min_pct / 100
     if total_found == total_needed:
         return True, f"Full Match: {total_found}/{total_needed}"
-    if total_found / max(total_needed, 1) >= 0.7:
-        return True, f"Partial Match: {total_found}/{total_needed} (>=70%)"
+    if total_found / max(total_needed, 1) >= ratio:
+        return True, f"Partial Match: {total_found}/{total_needed} (>={min_pct}%)"
     if total_found > 0:
-        display_warning(f"Skipping — only {total_found}/{total_needed} vehicles available")
+        display_warning(f"Skipping — only {total_found}/{total_needed} vehicles available (<{min_pct}%)")
     
     return False, f"Insufficient: {total_found}/{total_needed} vehicles found."
 
