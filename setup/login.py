@@ -1,7 +1,12 @@
+import asyncio
+
 from utils.pretty_print import display_info, display_error
 
 async def login_single(username, password, headless, thread_id, delay, playwright):
     display_info(f"Starting login for browser: {thread_id}")
+    if delay:
+        display_info(f"Staggering login for browser {thread_id} by {delay}s")
+        await asyncio.sleep(delay)
     browser = None
     try:
         browser = await playwright.chromium.launch(headless=headless, devtools=False)

@@ -17,26 +17,32 @@ NON_VEHICLE_KEYWORDS = [
 async def check_and_grab_missions(browsers, num_threads):
     first_browser = browsers[0]
     try:
-        if os.path.exists('data/mission_data.json'):
-            os.remove('data/mission_data.json')
-        
         page = first_browser.contexts[0].pages[0]
         await page.goto("https://www.missionchief.com")
         
         mission_panels = await page.query_selector_all('.mission_panel_red')
         mission_list = []
         for panel in mission_panels:
-            m_id_attr = await panel.get_attribute('id')
-            m_type_id = await panel.get_attribute('mission_type_id') 
-            if m_id_attr:
-                clean_id = m_id_attr.split('_')[-1]
-                mission_list.append({'id': clean_id, 'type': m_type_id})
+            try:
+                m_id_attr = await panel.get_attribute('id')
+                m_type_id = await panel.get_attribute('mission_type_id') 
+                if m_id_attr:
+                    clean_id = m_id_attr.split('_')[-1]
+                    if clean_id.isdigit():
+                        mission_list.append({'id': clean_id, 'type': m_type_id})
+            except (AttributeError, ValueError) as e:
+                display_error(f"Panel parse error: {e}")
+                continue
 
         display_info(f"Found {len(mission_list)} missions.")
         mission_data = await split_mission_ids_among_threads(mission_list, browsers, num_threads)
         
-        with open('data/mission_data.json', 'w') as outfile:
+        os.makedirs('data', exist_ok=True)
+        tmp_path = 'data/mission_data.json.tmp'
+        final_path = 'data/mission_data.json'
+        with open(tmp_path, 'w') as outfile:
             json.dump(mission_data, outfile, indent=4)
+        os.replace(tmp_path, final_path)
         display_info("Mission data stored.")
         
     except Exception as e:
@@ -62,13 +68,18 @@ async def get_on_scene_vehicles(page):
         try:
             vehicle_elements = await page.query_selector_all(selector)
             for el in vehicle_elements:
-                type_id_str = await el.get_attribute('vehicle_type_id')
-                if type_id_str:
-                    try:
-                        v_type_id = int(type_id_str)
-                        on_scene_counts[v_type_id] = on_scene_counts.get(v_type_id, 0) + 1
-                    except ValueError: continue
-        except Exception: pass
+                try:
+                    type_id_str = await el.get_attribute('vehicle_type_id')
+                    if type_id_str:
+                        try:
+                            v_type_id = int(type_id_str)
+                            on_scene_counts[v_type_id] = on_scene_counts.get(v_type_id, 0) + 1
+                        except ValueError: continue
+                except (AttributeError, ValueError) as e:
+                    display_error(f"On-scene parse error: {e}")
+                    continue
+        except Exception as e:
+            display_error(f"Selector {selector} failed: {e}")
     return on_scene_counts
 
 async def gather_mission_info(mission_entries, browser, thread_id):
@@ -86,7 +97,9 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 await page.wait_for_selector('#missionH1', timeout=5000)
                 mission_name_element = await page.query_selector('#missionH1')
                 mission_name = (await mission_name_element.inner_text()).strip() if mission_name_element else "Unknown"
-            except: continue
+            except Exception as e:
+                display_error(f"Mission {mission_id} H1 timeout: {e}")
+                continue
             
             vehicles = []
             crashed_cars = 0
@@ -126,12 +139,19 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                     text_lower = text.lower()
                     if "water" in text_lower and ("missing" in text_lower or "needed" in text_lower):
                         match = re.search(r'([\d,]+)\s*(?:l|liters|gal|gallons|water)', text_lower)
-                        if match: water_needed = int(match.group(1).replace(',', ''))
+                        if match:
+                            try:
+                                water_needed = int(match.group(1).replace(',', ''))
+                            except ValueError: pass
                     if "foam" in text_lower and ("missing" in text_lower or "needed" in text_lower):
                         match = re.search(r'([\d,]+)\s*(?:l|liters|gal|gallons|foam)', text_lower)
-                        if match: foam_needed = int(match.group(1).replace(',', ''))
+                        if match:
+                            try:
+                                foam_needed = int(match.group(1).replace(',', ''))
+                            except ValueError: pass
 
-            except Exception: pass
+            except Exception as e:
+                display_error(f"Alert scan error {mission_id}: {e}")
 
             # --- 2. MISSING VEHICLES (Red Text - Dispatch Trigger) ---
             try:
@@ -142,26 +162,31 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                     
                     vehicle_entries = text.split(',')
                     for entry in vehicle_entries:
-                        match = re.search(r'(\d+)\s+(.+)', entry.strip())
-                        if match:
-                            count = int(match.group(1))
-                            name = match.group(2).strip().lower()
-                            if name.endswith('s') and not name.endswith('ems') and not name.endswith('ss'): name = name[:-1]
-                            
-                            # Filter Resources
-                            if "water" in name and not any(x in name for x in ["tanker", "rescue", "trailer", "boat"]):
-                                water_needed = max(water_needed, count)
-                                continue
-                            if "foam" in name and not any(x in name for x in ["tender", "trailer"]):
-                                foam_needed = max(foam_needed, count)
-                                continue
+                        try:
+                            match = re.search(r'(\d+)\s+(.+)', entry.strip())
+                            if match:
+                                count = int(match.group(1))
+                                name = match.group(2).strip().lower()
+                                if name.endswith('s') and not name.endswith('ems') and not name.endswith('ss'): name = name[:-1]
+                                
+                                # Filter Resources
+                                if "water" in name and not any(x in name for x in ["tanker", "rescue", "trailer", "boat"]):
+                                    water_needed = max(water_needed, count)
+                                    continue
+                                if "foam" in name and not any(x in name for x in ["tender", "trailer"]):
+                                    foam_needed = max(foam_needed, count)
+                                    continue
 
-                            if name == "car to tow":
-                                crashed_cars = count
-                            else:
-                                vehicles.append({"name": name, "count": count})
+                                if name == "car to tow":
+                                    crashed_cars = count
+                                else:
+                                    vehicles.append({"name": name, "count": count})
+                        except (ValueError, AttributeError) as e:
+                            display_error(f"Vehicle entry parse error: {e}")
+                            continue
                     found_missing_info = True
-            except: pass
+            except Exception as e:
+                display_error(f"Missing vehicles parse error {mission_id}: {e}")
 
             if found_missing_info or crashed_cars > 0:
                 if current_patient_count > 0:
@@ -188,7 +213,8 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 credits_value = scraped_credits
                 await page.keyboard.press('Escape')
                 await asyncio.sleep(0.5)
-            except Exception: pass
+            except Exception as e:
+                display_error(f"Help iframe error {mission_id}: {e}")
 
             # --- 4. CALCULATE REMAINING NEEDS ---
             vehicles_on_scene = await get_on_scene_vehicles(page)
@@ -233,7 +259,11 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 "foam_needed": foam_needed,
                 "required_personnel": []
             }
-        except Exception: pass
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            display_error(f"Mission {mission_id} error: {e}")
+            continue
 
     return mission_data
 
@@ -299,4 +329,6 @@ async def handle_prisoner_transport(page):
                 await page.wait_for_load_state('networkidle')
                 return True
         return False
-    except Exception: return False
+    except Exception as e:
+        display_error(f"Prisoner transport error: {e}")
+        return False

@@ -35,24 +35,24 @@ def get_transport_delay():
 def get_share_alliance():
     try:
         return config.getboolean('mission_settings', 'share_alliance')
-    except:
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
         return True # Default to True if missing
 
 def get_process_alliance():
     try:
         return config.getboolean('mission_settings', 'process_alliance')
-    except:
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
         return True # Default to True if missing
 def get_hiring_mode():
     try:
         # Returns: 0 (Disabled), 1, 2, 3 (Days), or -1 (Automatic/Premium)
         return config.getint('personnel_settings', 'hiring_mode', fallback=0)
-    except:
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
         return 0
 
 def get_hiring_check_interval():
     try:
         # How often (in seconds) to check personnel. Default 1 hour (3600s)
         return config.getint('delays', 'personnel_check', fallback=3600)
-    except:
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
         return 3600

@@ -6,6 +6,12 @@ from utils.pretty_print import display_error
 
 class VehicleManager:
     def __init__(self, data_folder="us"):
+        # Resolve relative to project root (utils/ -> project) to avoid CWD bugs
+        if not os.path.isabs(data_folder):
+            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            candidate = os.path.join(base, data_folder)
+            if os.path.exists(candidate):
+                data_folder = candidate
         self.data_folder = data_folder
         self.index = {}          # Map: Simple Name -> List of System IDs
         self.regex_rules = []    # List of {regex: compiled_re, id: system_id}
@@ -62,7 +68,7 @@ class VehicleManager:
                                         self.vehicle_capabilities[vid] = set()
                                     self.vehicle_capabilities[vid].add(capability)
 
-            except Exception as e:
+            except (OSError, json.JSONDecodeError, ValueError) as e:
                 display_error(f"Error loading Vehicle.mscv: {e}")
 
         # 2. Load Specific Patterns (*.mscv)
@@ -124,7 +130,9 @@ class VehicleManager:
                             if any(k in name_lower for k in keywords):
                                 self.vehicle_capabilities[vehicle_id].add(capability)
                             
-            except Exception: pass
+            except (OSError, json.JSONDecodeError, ValueError, re.error) as e:
+                display_error(f"Skipping {filepath}: {e}")
+                continue
 
     def add_to_index(self, key, ids):
         if key not in self.index:

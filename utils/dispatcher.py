@@ -2,10 +2,11 @@ import json
 import asyncio
 import os
 
-from utils.pretty_print import display_info, display_error
+from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import VehicleManager
 from data.config_settings import get_share_alliance, get_process_alliance
 
+# Resolved via VehicleManager absolute-path logic; "us" will auto-resolve to project_root/us
 VEHICLE_MANAGER = VehicleManager(data_folder="us")
 VEHICLE_DATA_CACHE = None
 USER_TO_SYSTEM_MAP = {} 
@@ -22,9 +23,12 @@ async def load_vehicle_data(force=False):
             for sys_id, user_ids in VEHICLE_DATA_CACHE.items():
                 for uid in user_ids:
                     USER_TO_SYSTEM_MAP[str(uid)] = int(sys_id)
-        except:
+        except (OSError, json.JSONDecodeError, ValueError) as e:
+            display_warning(f"Vehicle data load failed: {e}")
             VEHICLE_DATA_CACHE = {}
             USER_TO_SYSTEM_MAP = {}
+        except asyncio.CancelledError:
+            raise
     return VEHICLE_DATA_CACHE
 
 async def navigate_and_dispatch(browsers):
@@ -69,8 +73,8 @@ async def navigate_and_dispatch(browsers):
         try:
             await page.goto(f"https://www.missionchief.com/missions/{mission_id}")
             await page.wait_for_selector('#missionH1', timeout=5000)
-        except:
-            display_error(f"Mission {mission_id} failed to load.")
+        except Exception as e:
+            display_error(f"Mission {mission_id} failed to load: {e}")
             continue
 
         if is_missing_mission or is_alliance_mission:
@@ -90,7 +94,8 @@ async def navigate_and_dispatch(browsers):
                     await share_btn.click()
                     display_info(f"🤝 Shared mission {mission_id}.")
                     await page.wait_for_timeout(500)
-            except: pass
+            except Exception as e:
+                display_warning(f"Share button error {mission_id}: {e}")
 
         display_info(f"✅ Dispatching: {reason}")
 
@@ -100,7 +105,8 @@ async def navigate_and_dispatch(browsers):
                 await load_btn.click()
                 await page.wait_for_load_state('networkidle')
                 await page.wait_for_timeout(1000)
-        except: pass
+        except Exception as e:
+            display_warning(f"Load missing vehicles error {mission_id}: {e}")
 
         # --- SELECT VEHICLES ---
         vehicle_requirements = data.get("vehicles", [])
@@ -143,8 +149,17 @@ async def navigate_and_dispatch(browsers):
                     await click_vehicle(page, cb)
                     used_vehicle_ids.append(v_id)
                     
-                    w = int(await cb.get_attribute("wasser_amount") or 0)
-                    f = int(await cb.get_attribute("foam_amount") or await cb.get_attribute("foam_amount_display") or 0)
+                    # Fix: support both US (water_amount) and German (wasser_amount) attributes
+                    w_raw = await cb.get_attribute("water_amount") or await cb.get_attribute("wasser_amount") or "0"
+                    f_raw = await cb.get_attribute("foam_amount") or await cb.get_attribute("foam_amount_display") or "0"
+                    try:
+                        w = int(str(w_raw).replace(',', '').strip() or 0)
+                    except ValueError:
+                        w = 0
+                    try:
+                        f = int(str(f_raw).replace(',', '').strip() or 0)
+                    except ValueError:
+                        f = 0
                     current_water += w
                     current_foam += f
                     
@@ -192,8 +207,16 @@ async def navigate_and_dispatch(browsers):
                     
                 if not needs_check: continue
                 
-                w = int(await cb.get_attribute("wasser_amount") or 0)
-                f = int(await cb.get_attribute("foam_amount") or await cb.get_attribute("foam_amount_display") or 0)
+                w_raw = await cb.get_attribute("water_amount") or await cb.get_attribute("wasser_amount") or "0"
+                f_raw = await cb.get_attribute("foam_amount") or await cb.get_attribute("foam_amount_display") or "0"
+                try:
+                    w = int(str(w_raw).replace(',', '').strip() or 0)
+                except ValueError:
+                    w = 0
+                try:
+                    f = int(str(f_raw).replace(',', '').strip() or 0)
+                except ValueError:
+                    f = 0
                 
                 useful = False
                 if req_water > current_water and w > 0:
@@ -256,10 +279,15 @@ async def check_mission_requirements_global_percent(page, mission_data):
     if total_needed == 0:
         return True, "Only EMS/Transport needed"
 
+    # Require at least 70% coverage to dispatch; avoids sending 1/7 vehicles
+    if total_found == total_needed:
+        return True, f"Full Match: {total_found}/{total_needed}"
+    if total_found / max(total_needed, 1) >= 0.7:
+        return True, f"Partial Match: {total_found}/{total_needed} (>=70%)"
     if total_found > 0:
-        return True, f"Partial Match: {total_found}/{total_needed}"
+        display_warning(f"Skipping — only {total_found}/{total_needed} vehicles available")
     
-    return False, f"Insufficient: 0/{total_needed} vehicles found. (Empty Fleet)"
+    return False, f"Insufficient: {total_found}/{total_needed} vehicles found."
 
 async def click_vehicle(page, checkbox):
     await page.evaluate('(checkbox) => checkbox.scrollIntoView()', checkbox)
