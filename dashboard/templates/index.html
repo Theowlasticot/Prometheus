@@ -62,6 +62,7 @@
       <button data-tab="missions" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Missions</button>
       <button data-tab="config" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Config & Settings</button>
       <button data-tab="bot" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Bot Control</button>
+      <button data-tab="logs" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Logs <span id="fixes-badge" class="ml-1 hidden px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-300 text-[10px]">0</span></button>
     </div>
 
     <section id="panel-stats" class="tab-panel">
@@ -318,6 +319,62 @@ uvicorn dashboard.app:app --host 127.0.0.1 --port 8000 --reload</pre>
         </div>
       </div>
       <div class="mt-4 rounded-xl bg-slate-950 border border-slate-800 p-3 text-[11px] font-mono text-slate-500">Tip: if <code>Start</code> fails immediately, check credentials in <b>Config → Credentials</b> and ensure <code>venv/bin/python -m playwright install</code> was run. Use <code>lsof -ti:8000 | xargs kill -9</code> if dashboard port busy.</div>
+    </section>
+
+    <section id="panel-logs" class="tab-panel hidden">
+      <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+        <div class="flex flex-wrap items-center gap-2 mb-3">
+          <h3 class="text-sm font-semibold">Action Logs <span class="text-xs font-normal text-slate-500">(persistent <code>logs/actions.jsonl</code> + <code>logs/prometheus.log</code>)</span></h3>
+          <span id="logs-count" class="ml-2 px-2 py-0.5 rounded-full bg-slate-800 text-xs font-mono">0</span>
+          <span id="fixes-count" class="px-2 py-0.5 rounded-full bg-red-500/15 text-red-300 border border-red-500/20 text-xs">0 fixes needed</span>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-2 mb-3">
+          <select id="log-level" class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs">
+            <option value="">All levels</option>
+            <option value="info">INFO</option>
+            <option value="warning">WARNING</option>
+            <option value="error">ERROR</option>
+            <option value="debug">DEBUG</option>
+          </select>
+          <select id="log-action" class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs">
+            <option value="">All actions</option>
+            <option value="general">general</option>
+            <option value="login">login</option>
+            <option value="mission_grab">mission_grab</option>
+            <option value="dispatch">dispatch</option>
+            <option value="transport">transport</option>
+            <option value="hire">hire</option>
+            <option value="asset_sync">asset_sync</option>
+            <option value="config_write">config_write</option>
+            <option value="bot_start">bot_start</option>
+            <option value="bot_stop">bot_stop</option>
+            <option value="warning">warning</option>
+            <option value="error">error</option>
+          </select>
+          <label class="flex items-center gap-1.5 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs"><input id="log-fix" type="checkbox" class="rounded" /> Fix needed</label>
+          <input id="log-search" placeholder="Search..." class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs" />
+          <select id="log-tail" class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs">
+            <option value="100">Tail 100</option>
+            <option value="200" selected>Tail 200</option>
+            <option value="500">Tail 500</option>
+          </select>
+          <button onclick="refreshLogs()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs">Refresh</button>
+        </div>
+        <div class="flex gap-2 mb-2">
+          <button onclick="refreshFixes()" class="px-3 py-1.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 border border-red-500/20 text-red-300 text-xs">Show Fixes (24h)</button>
+          <button onclick="exportLogs()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs">Export JSONL</button>
+          <span id="logs-status" class="text-xs font-mono self-center text-slate-500"></span>
+        </div>
+        <div class="overflow-auto max-h-[520px] rounded-xl border border-slate-800 bg-slate-950">
+          <table class="w-full text-xs font-mono">
+            <thead class="sticky top-0 bg-slate-900 text-[11px] uppercase tracking-widest text-slate-400">
+              <tr><th class="text-left px-3 py-1.5">Time</th><th class="text-left px-3 py-1.5">Level</th><th class="text-left px-3 py-1.5">Action</th><th class="text-left px-3 py-1.5">Mission</th><th class="text-left px-3 py-1.5">Message</th><th class="text-center px-3 py-1.5">Fix?</th></tr>
+            </thead>
+            <tbody id="logs-body" class="divide-y divide-slate-800/60"></tbody>
+          </table>
+        </div>
+        <p class="text-[11px] text-slate-500 mt-2">Every action is logged with <code>ts, level, action, fix_needed, mission_id, vehicle_ids, run_id</code>. Use <b>Fix needed</b> to see what needs fixing. Logs rotate `5MB×5` in <code>logs/</code>.</p>
+      </div>
     </section>
 
     <p class="text-center text-[11px] font-mono text-slate-600 mt-10">Prometheus V3 · <a href="https://github.com/Theowlasticot/Prometheus" class="underline decoration-slate-700 hover:text-slate-400">Theowlasticot/Prometheus</a> · Inspired by MissionchiefBot-X & Mission-Chief.Bot</p>

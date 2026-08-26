@@ -395,6 +395,77 @@ async function stopBot(){
   }catch(e){ $("bot-msg").textContent = "error: "+e; toast("Stop failed: "+e, false); }
 }
 
+async function refreshLogs(){
+  const level = $("log-level")?.value || "";
+  const action = $("log-action")?.value || "";
+  const fix = $("log-fix")?.checked ? "true" : "";
+  const search = $("log-search")?.value || "";
+  const tail = $("log-tail")?.value || "200";
+  const qs = new URLSearchParams();
+  if(level) qs.set("level", level);
+  if(action) qs.set("action", action);
+  if(fix) qs.set("fix_needed", "true");
+  if(search) qs.set("search", search);
+  qs.set("tail", tail);
+  $("logs-status").textContent = "loading…";
+  try{
+    const r = await fetch("/api/logs?"+qs.toString());
+    const j = await r.json();
+    $("logs-count").textContent = j.count ?? 0;
+    const fixesBadge = $("fixes-badge");
+    const fixesCountEl = $("fixes-count");
+    // Also fetch fixes count for badge
+    try{
+      const fr = await fetch("/api/logs/fixes?hours=24&tail=200");
+      const fj = await fr.json();
+      const cnt = fj.count ?? 0;
+      fixesCountEl.textContent = `${cnt} fixes needed`;
+      fixesCountEl.className = cnt ? "px-2 py-0.5 rounded-full bg-red-500/15 text-red-300 border border-red-500/20 text-xs" : "px-2 py-0.5 rounded-full bg-slate-800 text-slate-500 text-xs";
+      if(cnt){
+        fixesBadge.textContent = cnt;
+        fixesBadge.classList.remove("hidden");
+      } else {
+        fixesBadge.classList.add("hidden");
+      }
+    }catch(e){}
+    const body = $("logs-body");
+    body.innerHTML = "";
+    if(!j.logs || !j.logs.length){
+      body.innerHTML = `<tr><td colspan="6" class="px-3 py-6 text-center text-slate-500">No logs yet — run the bot or check <code>logs/actions.jsonl</code></td></tr>`;
+      $("logs-status").textContent = "no logs";
+      return;
+    }
+    for(const log of j.logs){
+      const tr = document.createElement("tr");
+      tr.className = log.fix_needed ? "bg-red-500/5" : "hover:bg-slate-800/30";
+      const lvlColor = log.level==="ERROR" ? "text-red-400" : log.level==="WARNING" ? "text-amber-400" : log.level==="DEBUG" ? "text-slate-500" : "text-emerald-300";
+      tr.innerHTML = `
+        <td class="px-3 py-1.5 whitespace-nowrap text-slate-400">${(log.ts||"").toString().slice(0,19).replace("T"," ")}</td>
+        <td class="px-3 py-1.5 ${lvlColor}">${log.level||""}</td>
+        <td class="px-3 py-1.5 text-sky-300">${log.action||""}</td>
+        <td class="px-3 py-1.5">${log.mission_id||""}</td>
+        <td class="px-3 py-1.5 text-slate-200 truncate max-w-[420px]" title="${(log.msg||"").replace(/"/g,'&quot;')}">${log.msg||""}</td>
+        <td class="px-3 py-1.5 text-center">${log.fix_needed ? "🔧" : ""}</td>`;
+      body.appendChild(tr);
+    }
+    $("logs-status").textContent = `${j.count} logs`;
+  }catch(e){ $("logs-status").textContent = "error: "+e; }
+}
+async function refreshFixes(){
+  $("log-fix").checked = true;
+  $("log-level").value = "";
+  $("log-action").value = "";
+  await refreshLogs();
+  // Switch to logs tab
+  document.querySelectorAll(".tab-btn").forEach(b=> b.className="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium");
+  document.querySelector('[data-tab="logs"]').className="tab-btn px-4 py-1.5 rounded-lg bg-slate-800 text-white text-sm font-medium shadow";
+  document.querySelectorAll(".tab-panel").forEach(p=> p.classList.add("hidden"));
+  document.getElementById("panel-logs").classList.remove("hidden");
+}
+function exportLogs(){
+  window.open("/api/logs?tail=1000", "_blank");
+}
+
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => { b.className = "tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium"; });
