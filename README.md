@@ -1,12 +1,12 @@
-# Prometheus - MissionChief Bot (US Server) - V3
+# Prometheus - MissionChief Bot (US Server) - V4
 
-**Prometheus V3** is an advanced automation bot designed for the US server of the browser game [MissionChief](https://www.missionchief.com).
+**Prometheus V4** is an advanced automation bot designed for the US server of the browser game [MissionChief](https://www.missionchief.com).
 
-Built with Python and Playwright, Prometheus handles mission dispatching, intelligent fleet management, prisoner/patient transport, and station personnel recruitment. V3 introduces a robust **CLI Menu System**, allowing you to choose specifically between mission dispatching, transport logic, or running both simultaneously across multiple browser threads.
+Built with Python and Playwright, Prometheus handles mission dispatching, intelligent fleet management, prisoner/patient transport, and station personnel recruitment. V4 introduces a robust **CLI Menu System**, allowing you to choose specifically between mission dispatching, transport logic, or running both simultaneously across multiple browser threads.
 
 > **Note:** This project is inspired by [MissionchiefBot-X](https://github.com/NatesHonor/MissionchiefBot-X).
 
-## 🚀 Key Features (V3)
+## 🚀 Key Features (V4)
 
   * **Smart Dispatching:** Analyzes mission requirements (including Water, Foam, SWAT, K9, and Personnel counts) and selects the appropriate vehicles based on your actual fleet capabilities.
   * **Intelligent Transport:**
@@ -79,7 +79,7 @@ venv/bin/python -m uvicorn dashboard.app:app --host 127.0.0.1 --port 8000 --relo
 ## ⚙️ Configuration
 
 1.  Open `config.ini` in the root directory.
-2.  Fill in your MissionChief credentials and adjust the settings. Below is the configuration structure for **V3**:
+2.  Fill in your MissionChief credentials and adjust the settings. Below is the configuration structure for **V4**:
 
 <!-- end list -->
 
@@ -137,7 +137,7 @@ Run the bot using Python:
 python Main.py
 ```
 
-Upon starting, you will be presented with the **V3 Menu**:
+Upon starting, you will be presented with the **V4 Menu**:
 
 ```text
 ╔═══════════════════════════════════╗
