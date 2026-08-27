@@ -83,86 +83,24 @@ def _read_config_dict(redact: bool = False) -> Dict[str, Any]:
     return out
 
 def _write_config_dict(updates: Dict[str, Any]):
-    # Preserve comments & order by editing file in-place instead of ConfigParser.write
-    # Fallback to ConfigParser if file missing
-    if not CONFIG_PATH.exists():
-        cfg = configparser.ConfigParser()
-        for section, values in updates.items():
-            cfg.add_section(section)
-            for k, v in values.items():
-                if isinstance(v, bool):
-                    v = "true" if v else "false"
-                cfg.set(section, k, str(v))
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            cfg.write(f)
-        return True
-
-    try:
-        text = CONFIG_PATH.read_text(encoding="utf-8")
-    except Exception:
-        text = ""
-    lines = text.splitlines()
-    # Track section positions
-    section_starts = {}
-    for idx, line in enumerate(lines):
-        s = line.strip()
-        if s.startswith("[") and s.endswith("]"):
-            sec = s[1:-1].strip()
-            section_starts[sec] = idx
+    cfg = configparser.ConfigParser()
+    cfg.optionxform = str  # Preserve case for keys
+    if CONFIG_PATH.exists():
+        try:
+            cfg.read(CONFIG_PATH, encoding="utf-8")
+        except Exception:
+            pass
 
     for section, values in updates.items():
-        if section not in section_starts:
-            # Append new section at end
-            if lines and lines[-1].strip() != "":
-                lines.append("")
-            lines.append(f"[{section}]")
-            # Recompute section starts after append
-            section_starts = {}
-            for idx, line in enumerate(lines):
-                s = line.strip()
-                if s.startswith("[") and s.endswith("]"):
-                    sec = s[1:-1].strip()
-                    section_starts[sec] = idx
-
-        sec_start = section_starts[section]
-        # Find section end (next section start or EOF)
-        sec_end = len(lines)
-        for sec, pos in section_starts.items():
-            if pos > sec_start and pos < sec_end:
-                sec_end = pos
-
+        if not cfg.has_section(section):
+            cfg.add_section(section)
         for k, v in values.items():
             if isinstance(v, bool):
                 v = "true" if v else "false"
-            v = str(v)
-            # Search within section
-            found = False
-            for i in range(sec_start + 1, sec_end):
-                stripped = lines[i].strip()
-                if not stripped or stripped.startswith("#") or stripped.startswith(";"):
-                    continue
-                if "=" in lines[i]:
-                    key_part = lines[i].split("=", 1)[0].strip()
-                    if key_part == k:
-                        # Preserve comment after value? Simple replace
-                        # Keep leading whitespace
-                        indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
-                        lines[i] = f"{indent}{k} = {v}"
-                        found = True
-                        break
-            if not found:
-                # Insert before section end (before next section or at EOF)
-                insert_at = sec_end
-                # Find last non-empty within section to insert after
-                # Insert at sec_end (which is next section header)
-                lines.insert(insert_at, f"{k} = {v}")
-                # Update section_starts for sections after
-                for sec in section_starts:
-                    if section_starts[sec] >= insert_at and sec != section:
-                        section_starts[sec] += 1
-                sec_end += 1
+            cfg.set(section, k, str(v))
 
-    CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        cfg.write(f)
     return True
 
 def _load_json(path: Path) -> Any:
