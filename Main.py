@@ -34,10 +34,12 @@ async def mission_logic(browsers_for_missions):
     display_info("Starting mission logic.")
     loop_count = 0
     
-    # --- PHASE 1: Tracking Variables ---
+    # --- Tracking Variables (time-based, not just loop-count to avoid void refetch) ---
     last_personnel_check = 0
     personnel_interval = get_hiring_check_interval() # e.g. 3600 seconds
     last_remote_sync = 0
+    last_vehicle_refresh = 0
+    last_building_refresh = 0
     try:
         remote_interval = get_server_refresh_interval()
         remote_auto = get_server_auto_update()
@@ -59,20 +61,43 @@ async def mission_logic(browsers_for_missions):
                 await manage_personnel(browsers_for_missions[0])
                 last_personnel_check = time.time()
             
-            # --- Vehicle Data Refresh Logic ---
-            # Refresh every 50 loops OR if the file doesn't exist
+            # --- Vehicle/Building Refresh Logic (time-based to avoid void refetch in loops) ---
+            # Previously every 50/100 loops caused 165 vehicle fetches every 8min even if fleet unchanged.
+            # Now time-based: vehicles every 3600s (1h), buildings every 7200s (2h), plus file-mtime check.
             vehicle_data_path = os.path.join(project_root, "data", "vehicle_data.json")
             building_data_path = os.path.join(project_root, "data", "building_data.json")
-            should_refresh_vehicles = not os.path.exists(vehicle_data_path) or (loop_count % 50 == 0)
-            should_refresh_buildings = not os.path.exists(building_data_path) or (loop_count % 100 == 0)
-            
+            # Check file mtime to avoid refetch if recently updated (e.g., manual)
+            def _file_age(path):
+                try:
+                    return current_time - os.path.getmtime(path)
+                except Exception:
+                    return float('inf')
+            should_refresh_vehicles = False
+            if not os.path.exists(vehicle_data_path):
+                should_refresh_vehicles = True
+            elif current_time - last_vehicle_refresh > 3600 and _file_age(vehicle_data_path) > 3600:
+                should_refresh_vehicles = True
+            # Fallback loop-count for first 2 loops to ensure initial data
+            if loop_count in (1, 2) and os.path.exists(vehicle_data_path):
+                should_refresh_vehicles = False
+
+            should_refresh_buildings = False
+            if not os.path.exists(building_data_path):
+                should_refresh_buildings = True
+            elif current_time - last_building_refresh > 7200 and _file_age(building_data_path) > 7200:
+                should_refresh_buildings = True
+            if loop_count in (1, 2) and os.path.exists(building_data_path):
+                should_refresh_buildings = False
+
             if should_refresh_vehicles:
-                display_info(f"Refreshing vehicle data (Loop {loop_count})...")
+                display_info(f"Refreshing vehicle data (Loop {loop_count}, age {_file_age(vehicle_data_path):.0f}s)...")
                 await gather_vehicle_data(browsers_for_missions, len(browsers_for_missions))
+                last_vehicle_refresh = time.time()
             if should_refresh_buildings:
-                display_info(f"Refreshing building data (Loop {loop_count})...")
+                display_info(f"Refreshing building data (Loop {loop_count}, age {_file_age(building_data_path):.0f}s)...")
                 try:
                     await gather_building_data(browsers_for_missions, len(browsers_for_missions))
+                    last_building_refresh = time.time()
                 except Exception as e:
                     display_error(f"Building data refresh failed: {e}")
 

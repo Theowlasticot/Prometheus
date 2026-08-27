@@ -35,12 +35,28 @@ async def handle_transport_requests(browser):
         try:
             await page.goto(base, timeout=30000)
             await page.wait_for_load_state('domcontentloaded', timeout=15000)
+            # Wait a bit for radio messages to load via AJAX (they are not instant)
+            try:
+                await page.wait_for_selector('ul#radio_messages_important, ul#radio_messages', timeout=5000)
+            except Exception:
+                pass
+            await page.wait_for_timeout(800)
         except Exception as e:
             display_error(f"Transport: failed to load main page: {e}")
             return
 
         try:
-            transport_requests = await page.query_selector_all('ul#radio_messages_important li')
+            # Check both important and normal radio messages (previously only important)
+            important = await page.query_selector_all('ul#radio_messages_important li')
+            normal = await page.query_selector_all('ul#radio_messages li')
+            # Deduplicate by vehicle_id
+            transport_requests = important + [n for n in normal if n not in important]
+            # Fallback: also check for any radio row with vehicle_id img
+            if not transport_requests:
+                # Some servers use different IDs, fallback to generic
+                fallback = await page.query_selector_all('[id^=\"radio_messages\"] li')
+                if fallback:
+                    transport_requests = fallback
         except Exception as e:
             display_error(f"Transport: failed to query radio messages: {e}")
             return
@@ -74,6 +90,11 @@ async def handle_transport_requests(browser):
             try:
                 await page.goto(vehicle_url, timeout=30000)
                 await page.wait_for_load_state('domcontentloaded', timeout=15000)
+                # Wait for hospital/cell tables to load via AJAX (up to 4s)
+                try:
+                    await page.wait_for_selector('table#own-hospitals, table#alliance-hospitals, table#alliance-cells, a.btn.btn-success', timeout=4000)
+                except Exception:
+                    await page.wait_for_timeout(600)
             except Exception as e:
                 display_error(f"Transport: failed to load {vehicle_url}: {e}")
                 continue
