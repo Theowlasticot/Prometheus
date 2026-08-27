@@ -63,6 +63,7 @@
       <button data-tab="config" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Config & Settings</button>
       <button data-tab="bot" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Bot Control</button>
       <button data-tab="logs" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Logs <span id="fixes-badge" class="ml-1 hidden px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-300 text-[10px]">0</span></button>
+      <button data-tab="training" class="tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium">Training & Equipment</button>
     </div>
 
     <section id="panel-stats" class="tab-panel">
@@ -375,6 +376,33 @@ uvicorn dashboard.app:app --host 127.0.0.1 --port 8000 --reload</pre>
         </div>
         <p class="text-[11px] text-slate-500 mt-2">Every action is logged with <code>ts, level, action, fix_needed, mission_id, vehicle_ids, run_id</code>. Use <b>Fix needed</b> to see what needs fixing. Logs rotate `5MB×5` in <code>logs/</code>.</p>
       </div>
+    </section>
+
+    <section id="panel-training" class="tab-panel hidden">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="rounded-2xl border border-sky-500/20 bg-slate-900/60 p-5 ring-1 ring-sky-500/10">
+          <h3 class="text-sm font-semibold mb-1">Training Matrix <span class="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/20">wiki/forum</span></h3>
+          <p class="text-xs text-slate-500 mb-3">From <code>data/training.json</code> (Fire/Rescue/Police/Coastal academies). Personnel must be assigned after course, or vehicle fails.</p>
+          <div id="training-list" class="space-y-2 max-h-[420px] overflow-auto text-xs font-mono"></div>
+        </div>
+        <div class="space-y-4">
+          <div class="rounded-2xl border border-amber-500/20 bg-slate-900/60 p-5 ring-1 ring-amber-500/10">
+            <h3 class="text-sm font-semibold mb-1">Equipment Capacity</h3>
+            <p class="text-xs text-slate-500 mb-3">Vehicle load limit vs portable items (from <code>equipment_capacity.json</code>).</p>
+            <div id="equipment-list" class="space-y-1 max-h-[200px] overflow-auto text-xs font-mono"></div>
+          </div>
+          <div class="rounded-2xl border border-emerald-500/20 bg-slate-900/60 p-5">
+            <h3 class="text-sm font-semibold mb-1">Multi-Role Vehicles</h3>
+            <p class="text-xs text-slate-500 mb-2">One vehicle fulfills two mission requirements (saves bays).</p>
+            <div id="multirole-list" class="space-y-1 max-h-[180px] overflow-auto text-xs"></div>
+          </div>
+          <div class="rounded-2xl border border-violet-500/20 bg-slate-900/60 p-5">
+            <h3 class="text-sm font-semibold mb-1">Automation Synergies</h3>
+            <div id="automation-list" class="text-xs space-y-1"></div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-4 rounded-xl bg-slate-950 border border-slate-800 p-3 text-[11px] font-mono text-slate-500">Training data from <code>https://xyrality.helpshift.com/hc/en/23-mission-chief/faq/1603-which-training-is-useful-for-what</code> + your table. Keep <code>assets_cache</code> sync live via <code>Server / Region → Check → Download</code> (smart <code>etag/md5</code>, only concerned region). New courses auto-appear after <code>git pull</code> or dashboard sync.</div>
     </section>
 
     <p class="text-center text-[11px] font-mono text-slate-600 mt-10">Prometheus V3 · <a href="https://github.com/Theowlasticot/Prometheus" class="underline decoration-slate-700 hover:text-slate-400">Theowlasticot/Prometheus</a> · Inspired by MissionchiefBot-X & Mission-Chief.Bot</p>

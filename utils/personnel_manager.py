@@ -114,7 +114,46 @@ async def manage_personnel(browser):
     except Exception as e:
         display_error(f"Error in personnel management: {e}")
     
+    # 3. School queue check (lightweight, logs only for now)
+    try:
+        await handle_training_queue(page, building_ids, base)
+    except Exception as e:
+        display_warning(f"Training queue check failed: {e}")
     display_info("👥 Personnel Management finished.")
+
+async def handle_training_queue(page, building_ids, base):
+    """Check for academy buildings and log training opportunities (wiki/forum matrix). No auto-start yet, just audit."""
+    try:
+        # Find academy buildings (heuristic: page contains Academy/Schule/Académie)
+        academies = []
+        for b_id in building_ids[:20]:  # limit to 20 to avoid hammer
+            try:
+                await page.goto(f"{base}/buildings/{b_id}", timeout=15000)
+                await page.wait_for_load_state('domcontentloaded', timeout=8000)
+                content = await page.content()
+                if any(k in content for k in ["Academy", "Akademie", "Académie", "Academia", "Academie", "Schule"]):
+                    academies.append(b_id)
+            except Exception:
+                continue
+        if academies:
+            display_info(f"Found {len(academies)} academy buildings: {academies[:3]}...")
+            # Check training.json for required courses and log
+            try:
+                from pathlib import Path
+                import json
+                training_path = Path(__file__).resolve().parent.parent / "data" / "training.json"
+                if training_path.exists():
+                    training_data = json.loads(training_path.read_text(encoding="utf-8"))
+                    total_courses = sum(len(courses) for courses in training_data.values())
+                    display_info(f"Training matrix: {total_courses} courses available (e.g., HazMat 3d, SWAT 5d, Truck License 2d) — academy {academies[0]} ready for assignment via dashboard Training tab")
+            except Exception:
+                pass
+        else:
+            display_info("No academy found — build Fire/Police/Rescue Academy 500k for training (HazMat 3d, SWAT 5d etc.)")
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        display_warning(f"Training queue error: {e}")
 
 async def handle_hiring(page, building_id, mode):
     # Navigate to Hire Page

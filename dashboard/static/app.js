@@ -466,6 +466,71 @@ function exportLogs(){
   window.open("/api/logs?tail=1000", "_blank");
 }
 
+async function loadTraining(){
+  try{
+    const r = await fetch("/api/training");
+    const j = await r.json();
+    // Training matrix
+    const tlist = document.getElementById("training-list");
+    if(tlist){
+      tlist.innerHTML = "";
+      for(const [academy, courses] of Object.entries(j.training || {})){
+        const h = document.createElement("div");
+        h.className = "font-semibold text-sky-300 mt-2";
+        h.textContent = academy;
+        tlist.appendChild(h);
+        for(const [course, info] of Object.entries(courses)){
+          const div = document.createElement("div");
+          div.className = "flex justify-between border border-slate-800 rounded px-2 py-1 bg-slate-950/50";
+          div.innerHTML = `<span>${course} <span class="text-slate-500">(${info.days}d)</span></span><span class="text-amber-300">${info.unlocks ? info.unlocks.slice(0,1).join("") : ""}</span>`;
+          div.title = (info.unlocks||[]).join(", ");
+          tlist.appendChild(div);
+        }
+      }
+      if(!Object.keys(j.training||{}).length) tlist.textContent = "No training data";
+    }
+    const elist = document.getElementById("equipment-list");
+    if(elist){
+      elist.innerHTML = "";
+      for(const [veh, info] of Object.entries(j.equipment || {})){
+        if(veh==="Equipment") continue;
+        const div = document.createElement("div");
+        div.className = "flex justify-between";
+        div.innerHTML = `<span>${veh}</span><span class="text-amber-300">${info.capacity||0} cap ${info.water?info.water+"w":""} ${info.foam?info.foam+"f":""}</span>`;
+        elist.appendChild(div);
+      }
+      // Equipment sizes
+      const eq = j.equipment?.Equipment || {};
+      for(const [eqName, eqInfo] of Object.entries(eq)){
+        const div = document.createElement("div");
+        div.className = "flex justify-between text-slate-400";
+        div.innerHTML = `<span>${eqName}</span><span>${eqInfo.size}</span>`;
+        elist.appendChild(div);
+      }
+    }
+    const mlist = document.getElementById("multirole-list");
+    if(mlist){
+      mlist.innerHTML = "";
+      for(const [veh, info] of Object.entries(j.multirole || {})){
+        const div = document.createElement("div");
+        div.className = "border border-slate-800 rounded px-2 py-1 bg-slate-950/50";
+        div.innerHTML = `<div class="font-medium text-emerald-300">${veh} <span class="text-slate-500 text-[10px]">${info.max_crew} crew ${info.water?info.water+"w":""} ${info.foam?info.foam+"f":""}</span></div><div class="text-slate-400">${info.roles.join(" + ")}</div>`;
+        mlist.appendChild(div);
+      }
+    }
+    const alist = document.getElementById("automation-list");
+    if(alist){
+      alist.innerHTML = "";
+      for(const [name, info] of Object.entries(j.automation || {})){
+        const div = document.createElement("div");
+        div.className = "border border-slate-800 rounded px-2 py-1 bg-slate-950/50";
+        div.innerHTML = `<div class="font-medium text-violet-300">${name}</div><div class="text-slate-400">${info.rule||""}</div>`;
+        alist.appendChild(div);
+      }
+    }
+  }catch(e){ console.error("loadTraining", e); }
+}
+
 document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab-btn").forEach(b => { b.className = "tab-btn px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-sm font-medium"; });
@@ -473,6 +538,8 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     const tab = btn.dataset.tab;
     document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
     document.getElementById("panel-" + tab).classList.remove("hidden");
+    if(tab==="training") loadTraining();
+    if(tab==="logs") refreshLogs();
   });
 });
 
@@ -487,6 +554,7 @@ loadConfig();
 loadServers();
 loadAssetStatus();
 refreshBotStatus();
+loadTraining();
 setInterval(fetchStats, 5000);
 setInterval(loadAssetStatus, 30000);
 setInterval(refreshBotStatus, 3000);
