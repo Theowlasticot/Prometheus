@@ -600,7 +600,6 @@ _bot_mode: str | None = None
 _bot_log_file: Path | None = None
 _bot_thread: Any = None
 import threading
-import queue
 
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)

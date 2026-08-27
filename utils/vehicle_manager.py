@@ -362,8 +362,12 @@ class VehicleManager:
             if capability.upper() in caps
         ]
 
-    def get_water_carriers(self):
-        cap_ids = self.get_ids_with_capability("WATER")
-        if not cap_ids:
-            return self.index.get('waterneeded', [])
-        return cap_ids
+def get_manager_for_code(code=None):
+    """Helper to get VehicleManager for current server code (DRY for dispatcher/mission_data)."""
+    if code is None:
+        try:
+            from data.config_settings import get_server_code
+            code = get_server_code()
+        except Exception:
+            code = "us"
+    return VehicleManager(code=code)

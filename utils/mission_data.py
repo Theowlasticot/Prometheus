@@ -5,18 +5,14 @@ import re
 from pathlib import Path
 
 from utils.pretty_print import display_info, display_error, display_warning
-from utils.vehicle_manager import VehicleManager
-from data.config_settings import get_server_code, get_server_url, is_alliance_mission_name
+from utils.vehicle_manager import VehicleManager, get_manager_for_code
+from data.config_settings import get_server_url, is_alliance_mission_name
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Singleton — dynamic code, cache-aware
+# Singleton — dynamic code, cache-aware (DRY via vehicle_manager helper)
 def _create_manager():
-    try:
-        code = get_server_code()
-    except Exception:
-        code = "us"
-    return VehicleManager(code=code)
+    return get_manager_for_code()
 
 VEHICLE_MANAGER = _create_manager()
 

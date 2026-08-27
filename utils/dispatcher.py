@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from utils.pretty_print import display_info, display_error, display_warning
-from utils.vehicle_manager import VehicleManager
+from utils.vehicle_manager import VehicleManager, get_manager_for_code
 from data.config_settings import get_share_alliance, get_process_alliance, get_server_code, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits
 from utils.building_data import load_building_data, has_expansion
 
@@ -48,13 +48,9 @@ async def get_vehicle_distances(page, vehicle_ids: list[str]) -> dict[str, float
             distances[vid] = float('inf')
     return distances
 
-# Dynamic manager — code from config, cache-aware (assets_cache/{code} or bundled us)
+# Dynamic manager — uses shared helper from vehicle_manager (DRY)
 def _create_manager():
-    try:
-        code = get_server_code()
-    except Exception:
-        code = "us"
-    return VehicleManager(code=code)
+    return get_manager_for_code()
 
 VEHICLE_MANAGER = _create_manager()
 
