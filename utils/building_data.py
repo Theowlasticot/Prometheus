@@ -73,12 +73,15 @@ async def gather_building_data(browsers, num_threads=1):
                 expansions = []
                 try:
                     # Common selectors: .expansion, badge, or dt containing "Expansion"
-                    exp_elems = await page.query_selector_all('.building_expansion, .label-success, .badge, dd')
+                    exp_elems = await page.query_selector_all('.building_expansion, .label-success, .badge, dd, .dl-horizontal dd, span.label')
                     for el in exp_elems:
                         try:
                             txt = (await el.inner_text()).strip()
-                            if txt and len(txt) < 50 and any(k in txt.lower() for k in ["ambulance", "hazmat", "water", "airport", "forestry", "foam", "rescue", "police", "prison", "cell"]):
-                                expansions.append(txt)
+                            if txt and len(txt) < 60 and any(k in txt.lower() for k in ["ambulance", "hazmat", "water", "airport", "forestry", "foam", "rescue", "police", "prison", "cell", "hotshot", "wildland", "forest", "coastal", "swiftwater", "boat", "airborne", "heavy machinery", "truck", "k-9", "k9", "swat", "sheriff", "fbi", "federal", "ocean", "arff"]):
+                                # Clean up and dedupe
+                                txt_clean = txt.strip()
+                                if txt_clean not in expansions:
+                                    expansions.append(txt_clean)
                         except Exception:
                             continue
                 except Exception:
