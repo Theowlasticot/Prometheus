@@ -54,51 +54,97 @@ async def gather_building_data(browsers, num_threads=1):
             display_warning("No buildings found — skipping building data")
             return {}
 
-        # Check expansions per building (limit to first 100 to avoid hammer)
+        # Check expansions per building (limit to 500, concurrent when multiple browsers)
         data = {}
-        # Chunk across browsers if available
         if num_threads > len(building_ids):
             num_threads = len(building_ids)
         if num_threads < 1:
             num_threads = 1
-        # Sequential with delay to avoid ban; handle up to 500 buildings (was 100 truncated)
         limit = min(len(building_ids), 500)
         if len(building_ids) > 500:
             display_warning(f"Found {len(building_ids)} buildings, limiting to 500 for this cycle")
-        for bid in building_ids[:limit]:
-            try:
-                await page.goto(f"{base}/buildings/{bid}", timeout=30000)
-                await page.wait_for_load_state("domcontentloaded", timeout=10000)
-                # Try to extract expansions: look for expansion list or badges
-                expansions = []
+        bids_slice = building_ids[:limit]
+
+        # Use concurrent gathering when multiple browsers available
+        if num_threads > 1 and len(browsers) > 1:
+            # Distribute bids across browsers
+            async def _process_one(bid, browser):
+                pg = browser.contexts[0].pages[0]
                 try:
-                    # Common selectors: .expansion, badge, or dt containing "Expansion"
-                    exp_elems = await page.query_selector_all('.building_expansion, .label-success, .badge, dd, .dl-horizontal dd, span.label')
-                    for el in exp_elems:
-                        try:
-                            txt = (await el.inner_text()).strip()
-                            if txt and len(txt) < 60 and any(k in txt.lower() for k in ["ambulance", "hazmat", "water", "airport", "forestry", "foam", "rescue", "police", "prison", "cell", "hotshot", "wildland", "forest", "coastal", "swiftwater", "boat", "airborne", "heavy machinery", "truck", "k-9", "k9", "swat", "sheriff", "fbi", "federal", "ocean", "arff"]):
-                                # Clean up and dedupe
-                                txt_clean = txt.strip()
-                                if txt_clean not in expansions:
-                                    expansions.append(txt_clean)
-                        except Exception:
-                            continue
-                except Exception:
-                    pass
-                # Also try to get building type from page
-                btype = "unknown"
+                    await pg.goto(f"{base}/buildings/{bid}", timeout=30000)
+                    await pg.wait_for_load_state("domcontentloaded", timeout=10000)
+                    expansions = []
+                    try:
+                        exp_elems = await pg.query_selector_all('.building_expansion, .label-success, .badge, dd, .dl-horizontal dd, span.label')
+                        for el in exp_elems:
+                            try:
+                                txt = (await el.inner_text()).strip()
+                                if txt and len(txt) < 60 and any(k in txt.lower() for k in ["ambulance", "hazmat", "water", "airport", "forestry", "foam", "rescue", "police", "prison", "cell", "hotshot", "wildland", "forest", "coastal", "swiftwater", "boat", "airborne", "heavy machinery", "truck", "k-9", "k9", "swat", "sheriff", "fbi", "federal", "ocean", "arff"]):
+                                    txt_clean = txt.strip()
+                                    if txt_clean not in expansions:
+                                        expansions.append(txt_clean)
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+                    btype = "unknown"
+                    try:
+                        t = await pg.query_selector('h1, #building_info, .building_type')
+                        if t:
+                            btype = (await t.inner_text()).strip()[:50]
+                    except Exception:
+                        pass
+                    return bid, {"type": btype, "expansions": expansions}
+                except Exception as e:
+                    display_warning(f"Building {bid} check failed: {e}")
+                    return bid, None
+            # Chunk and gather with limited concurrency (3 at a time)
+            sem = asyncio.Semaphore(min(3, len(browsers)))
+            async def _sem_task(bid, br):
+                async with sem:
+                    res = await _process_one(bid, br)
+                    await asyncio.sleep(0.3)  # small delay to avoid ban
+                    return res
+            tasks = []
+            for idx, bid in enumerate(bids_slice):
+                br = browsers[idx % len(browsers)]
+                tasks.append(_sem_task(bid, br))
+            results = await asyncio.gather(*tasks)
+            for bid, info in results:
+                if info is not None:
+                    data[bid] = info
+        else:
+            # Fallback sequential for single browser
+            for bid in bids_slice:
                 try:
-                    t = await page.query_selector('h1, #building_info, .building_type')
-                    if t:
-                        btype = (await t.inner_text()).strip()[:50]
-                except Exception:
-                    pass
-                data[bid] = {"type": btype, "expansions": expansions}
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                display_warning(f"Building {bid} check failed: {e}")
-                continue
+                    await page.goto(f"{base}/buildings/{bid}", timeout=30000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                    expansions = []
+                    try:
+                        exp_elems = await page.query_selector_all('.building_expansion, .label-success, .badge, dd, .dl-horizontal dd, span.label')
+                        for el in exp_elems:
+                            try:
+                                txt = (await el.inner_text()).strip()
+                                if txt and len(txt) < 60 and any(k in txt.lower() for k in ["ambulance", "hazmat", "water", "airport", "forestry", "foam", "rescue", "police", "prison", "cell", "hotshot", "wildland", "forest", "coastal", "swiftwater", "boat", "airborne", "heavy machinery", "truck", "k-9", "k9", "swat", "sheriff", "fbi", "federal", "ocean", "arff"]):
+                                    txt_clean = txt.strip()
+                                    if txt_clean not in expansions:
+                                        expansions.append(txt_clean)
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+                    btype = "unknown"
+                    try:
+                        t = await page.query_selector('h1, #building_info, .building_type')
+                        if t:
+                            btype = (await t.inner_text()).strip()[:50]
+                    except Exception:
+                        pass
+                    data[bid] = {"type": btype, "expansions": expansions}
+                    await asyncio.sleep(0.4)
+                except Exception as e:
+                    display_warning(f"Building {bid} check failed: {e}")
+                    continue
         # Save atomically
         os.makedirs(DATA_PATH.parent, exist_ok=True)
         tmp = str(DATA_PATH) + ".tmp"
