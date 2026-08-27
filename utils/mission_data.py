@@ -288,17 +288,19 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                                 v["count"] = max(v["count"], current_patient_count)
                 # Try to still get credits via help if missing (helps sorting)
                 required_expansions = []
+                required_personnel = []
                 if credits_value == 0:
                     try:
                         help_btn = await page.query_selector('#mission_help')
                         if help_btn and await help_btn.is_visible():
                             await help_btn.click(timeout=4000)
                             await page.wait_for_selector('#iframe-inside-container', timeout=3000)
-                            _, scraped_credits, water_from_help, foam_from_help, expansions_from_help = await gather_vehicle_requirements(page)
+                            _, scraped_credits, water_from_help, foam_from_help, expansions_from_help, personnel_from_help = await gather_vehicle_requirements(page)
                             credits_value = scraped_credits
                             water_needed = max(water_needed, water_from_help)
                             foam_needed = max(foam_needed, foam_from_help)
                             required_expansions = expansions_from_help
+                            required_personnel = personnel_from_help
                             await page.keyboard.press('Escape')
                             await asyncio.sleep(0.3)
                     except Exception:
@@ -315,7 +317,7 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                     "crashed_cars": crashed_cars,
                     "water_needed": water_needed,
                     "foam_needed": foam_needed,
-                    "required_personnel": [],
+                    "required_personnel": required_personnel,
                     "required_expansions": required_expansions
                 }
                 continue
@@ -323,16 +325,18 @@ async def gather_mission_info(mission_entries, browser, thread_id):
             # --- 3. STANDARD REQUIREMENTS ---
             raw_requirements = []
             required_expansions = []
+            required_personnel = []
             try:
                 help_btn = await page.query_selector('#mission_help')
                 if help_btn and await help_btn.is_visible():
                     await help_btn.click(timeout=4000)
                     await page.wait_for_selector('#iframe-inside-container', timeout=5000)
-                    raw_requirements, scraped_credits, water_from_help, foam_from_help, expansions_from_help = await gather_vehicle_requirements(page)
+                    raw_requirements, scraped_credits, water_from_help, foam_from_help, expansions_from_help, personnel_from_help = await gather_vehicle_requirements(page)
                     credits_value = scraped_credits
                     water_needed = max(water_needed, water_from_help)
                     foam_needed = max(foam_needed, foam_from_help)
                     required_expansions = expansions_from_help
+                    required_personnel = personnel_from_help
                     await page.keyboard.press('Escape')
                     await asyncio.sleep(0.5)
                 else:
@@ -385,7 +389,7 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 "crashed_cars": crashed_cars,
                 "water_needed": water_needed,
                 "foam_needed": foam_needed,
-                "required_personnel": [],
+                "required_personnel": required_personnel,
                 "required_expansions": required_expansions
             }
         except asyncio.CancelledError:
@@ -408,6 +412,7 @@ async def gather_vehicle_requirements(page):
     water_needed = 0
     foam_needed = 0
     required_expansions = []
+    required_personnel = []
     
     # Try language-specific headers first, then fallback to generic
     # US: Vehicle and Personnel Requirements, Reward and Precondition
@@ -513,6 +518,35 @@ async def gather_vehicle_requirements(page):
                             continue  # don't add as vehicle
                         except ValueError:
                             pass
+
+            # Handle personnel requirements (e.g., "Required Personnel: 8x HazMat")
+            if "personnel" in lower_name or "personal" in lower_name:
+                # Parse like "8x HazMat" or "4x HazMat"
+                match = re.search(r'(\d+)\s*x\s*(.+)', count_text, re.IGNORECASE)
+                if not match:
+                    # Try alternative format: "HazMat 8"
+                    match = re.search(r'(\d+)\s+(.+)', raw_name)
+                    if match:
+                        # This is likely not personnel but vehicle, so skip
+                        pass
+                    else:
+                        # Try to parse count_text as "8x HazMat"
+                        m2 = re.search(r'(\d+)', count_text)
+                        if m2:
+                            cnt = int(m2.group(1))
+                            # Extract name after x
+                            name_part = re.sub(r'^\d+\s*x\s*', '', count_text, flags=re.IGNORECASE).strip()
+                            if name_part:
+                                required_personnel.append({"name": name_part, "count": cnt})
+                                continue
+                else:
+                    cnt = int(match.group(1))
+                    name_part = match.group(2).strip()
+                    # Clean up name (remove parentheses)
+                    name_part = re.sub(r'\(.*\)', '', name_part).strip()
+                    if name_part:
+                        required_personnel.append({"name": name_part, "count": cnt})
+                        continue
             
             if any(k in lower_name for k in NON_VEHICLE_KEYWORDS):
                 if not any(valid in lower_name for valid in ["tanker", "tender", "vehicle", "rescue", "trailer", "boat"]):
@@ -527,7 +561,41 @@ async def gather_vehicle_requirements(page):
             
             vehicle_requirements.append({"name": vehicle_name, "count": vehicle_count})
 
-    return vehicle_requirements, credits, water_needed, foam_needed, required_expansions
+    # Also check other tables (e.g., "Other information" for personnel like "Required Personnel: 40x Hotshot")
+    # The above only covered the Vehicle table; check all tables for personnel/expansions
+    try:
+        all_tables = await page.query_selector_all('div.col-md-4 > table, #lightbox_box table')
+        for tbl in all_tables:
+            if tbl == requirement_table or tbl == credit_table:
+                continue
+            rows = await tbl.query_selector_all('tbody tr')
+            for row in rows:
+                try:
+                    cols = await row.query_selector_all('td')
+                    if len(cols) < 2:
+                        continue
+                    raw_name = (await cols[0].inner_text()).strip()
+                    count_text = (await cols[1].inner_text()).strip()
+                    lower_name = raw_name.lower()
+                    if "personnel" in lower_name or "personal" in lower_name:
+                        m = re.search(r'(\d+)\s*x\s*(.+)', count_text, re.IGNORECASE)
+                        if m:
+                            cnt = int(m.group(1))
+                            name_part = re.sub(r'\(.*\)', '', m.group(2).strip()).strip()
+                            if name_part and not any(p["name"] == name_part for p in required_personnel):
+                                required_personnel.append({"name": name_part, "count": cnt})
+                    # Also check for expansions in other tables (fallback)
+                    if "expansions" in lower_name or "expansion" in lower_name:
+                        raw_name2 = (await cols[0].inner_text()).strip()
+                        exp_name = raw_name2.replace("Required", "").replace("required", "").replace("Expansions", "").replace("expansions", "").replace("Expansion", "").replace("expansion", "").replace(":", "").strip()
+                        if exp_name and exp_name not in required_expansions:
+                            required_expansions.append(exp_name)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    return vehicle_requirements, credits, water_needed, foam_needed, required_expansions, required_personnel
 
 async def handle_prisoner_transport(page):
     try:
