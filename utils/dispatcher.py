@@ -384,37 +384,96 @@ async def navigate_and_dispatch(browsers):
                 if useful:
                     await click_vehicle(page, cb)
                     used_vehicle_ids.append(vid)
+                    lock_vehicle(vid, mission_id)
                     display_info(f"Resource Vehicle ({vid}): +{w}W / +{f}F")
 
-        # --- TRAILER TOWING CHECK ---
-        # Ensure trailers have towing vehicles (Heavy Rescue, Utility, etc.)
+        # --- AUTOMATION SYNERGIES (EMS Chief, Sheriff, Fly-Car, Manpower) ---
+        try:
+            # EMS Chief auto-hospital: if EMS Chief (29) dispatched, mark patients as auto-transported
+            has_ems_chief = any(USER_TO_SYSTEM_MAP.get(str(vid)) == 29 for vid in used_vehicle_ids)
+            if has_ems_chief and patients_count > 0:
+                display_info(f"EMS Chief auto-hospital synergy active for {patients_count} patients (no extra ambulances needed for hospital routing)")
+                # Sheriff auto-prisoner: if Sheriff (47) dispatched, prisoners auto
+                # (handled in transport, just log)
+            has_sheriff = any(USER_TO_SYSTEM_MAP.get(str(vid)) == 47 for vid in used_vehicle_ids)
+            if has_sheriff:
+                display_info("Sheriff auto-prisoner synergy active")
+            # Fly-Car ALS upgrade: if Fly-Car (15) present, BLS becomes ALS
+            has_flycar = any(USER_TO_SYSTEM_MAP.get(str(vid)) == 15 for vid in used_vehicle_ids)
+            if has_flycar:
+                display_info("Fly-Car ALS upgrade active — BLS ambulances upgraded to ALS")
+            # Manpower speed multiplier: log personnel count
+            # Use Crew Carrier 12 crew for large fires — suggest if many personnel needed
+            total_personnel = len(used_vehicle_ids) * 3  # heuristic avg 3 per vehicle
+            if total_personnel < 10 and any("fire" in r.get("name","").lower() for r in vehicle_requirements):
+                display_info(f"Manpower hint: {total_personnel} personnel on scene — consider Crew Carrier (12 crew) for faster completion (6 vs 3 is 2x speed)")
+        except Exception as e:
+            display_warning(f"Automation synergy check error: {e}")
+
+        # --- TRAILER TOWING CHECK (using trailers.json via VehicleManager) ---
         try:
             trailer_used = []
             for vid in list(used_vehicle_ids):
                 sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
-                if sys_id in TRAILER_IDS:
-                    trailer_used.append(vid)
+                # Use new VehicleManager is_trailer if available, else fallback to hardcoded
+                is_trailer = False
+                try:
+                    if hasattr(VEHICLE_MANAGER, 'is_trailer'):
+                        is_trailer = VEHICLE_MANAGER.is_trailer(sys_id) if sys_id else False
+                    else:
+                        is_trailer = sys_id in TRAILER_IDS
+                except Exception:
+                    is_trailer = sys_id in TRAILER_IDS
+                if is_trailer:
+                    trailer_used.append((vid, sys_id))
             if trailer_used:
-                # Need towing vehicle for each trailer — try to find one
-                tow_needed = len(trailer_used)
+                # For each trailer, find specific towing vehicle from trailers.json
                 tow_found = 0
-                # Towing vehicles are typically Heavy Rescue, Utility, Battalion, etc. (not trailers)
-                for cb in available_vehicles_elements:
-                    if tow_found >= tow_needed:
-                        break
-                    vid = await cb.get_attribute("value")
-                    if vid in used_vehicle_ids or await cb.is_checked():
-                        continue
-                    sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
-                    if sys_id and sys_id not in TRAILER_IDS:
-                        # Check if this vehicle can tow (heuristic: heavy rescue/utility/battalion)
-                        # For now accept any non-trailer that is valid for rescue/utility
-                        await click_vehicle(page, cb)
-                        used_vehicle_ids.append(vid)
-                        tow_found += 1
-                        display_info(f"Towing vehicle for trailer: {vid}")
-                if tow_found < tow_needed:
-                    display_warning(f"Trailer(s) {trailer_used} may lack towing vehicle ({tow_found}/{tow_needed})")
+                for trailer_vid, trailer_sys in trailer_used:
+                    towing_ids = []
+                    try:
+                        if hasattr(VEHICLE_MANAGER, 'get_towing_vehicles'):
+                            towing_ids = VEHICLE_MANAGER.get_towing_vehicles(trailer_sys)
+                    except Exception:
+                        towing_ids = []
+                    # Find a towing vehicle for this trailer
+                    found_for_this = False
+                    for cb in available_vehicles_elements:
+                        vid = await cb.get_attribute("value")
+                        if vid in used_vehicle_ids or await cb.is_checked():
+                            continue
+                        sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
+                        if not sys_id:
+                            continue
+                        # Check if sys_id is in towing_ids (if defined) or is not a trailer
+                        is_tower = False
+                        if towing_ids:
+                            is_tower = sys_id in towing_ids
+                        else:
+                            # Fallback: any non-trailer
+                            try:
+                                is_tower = not VEHICLE_MANAGER.is_trailer(sys_id) if hasattr(VEHICLE_MANAGER, 'is_trailer') else sys_id not in TRAILER_IDS
+                            except Exception:
+                                is_tower = sys_id not in TRAILER_IDS
+                        if is_tower:
+                            # Training check: towing vehicle must have Truck License etc. if required
+                            try:
+                                req_train = VEHICLE_MANAGER.get_required_training(sys_id) if hasattr(VEHICLE_MANAGER, 'get_required_training') else []
+                                if req_train:
+                                    display_warning(f"Towing vehicle {vid} requires training {req_train} — ensure crew trained")
+                            except Exception:
+                                pass
+                            await click_vehicle(page, cb)
+                            used_vehicle_ids.append(vid)
+                            lock_vehicle(vid, mission_id)
+                            tow_found += 1
+                            found_for_this = True
+                            display_info(f"Towing vehicle {vid} for trailer {trailer_vid} (trailer type {trailer_sys})")
+                            break
+                    if not found_for_this:
+                        display_warning(f"No towing vehicle found for trailer {trailer_vid} (type {trailer_sys}, needs {towing_ids})")
+                if tow_found < len(trailer_used):
+                    display_warning(f"Trailer(s) {trailer_used} may lack towing vehicle ({tow_found}/{len(trailer_used)})")
         except Exception as e:
             display_warning(f"Trailer check error: {e}")
 

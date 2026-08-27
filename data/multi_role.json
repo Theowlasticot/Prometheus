@@ -1,0 +1,84 @@
+{
+  "Quint": {
+    "roles": ["Type 1 Engine", "Platform / Ladder Truck"],
+    "max_crew": 6,
+    "water": 500,
+    "foam": 25,
+    "training": "Rank: Captain",
+    "station": "Fire Station",
+    "mscv_ids": [13],
+    "aliases": ["platform trucks", "platform truck", "quint"]
+  },
+  "Rescue Engine": {
+    "roles": ["Type 1 Engine", "Heavy Rescue"],
+    "max_crew": 6,
+    "water": 750,
+    "foam": 25,
+    "training": "Rank: Captain",
+    "station": "Fire Station",
+    "mscv_ids": [4, 18],
+    "aliases": ["rescue engine", "rescue pump"]
+  },
+  "Pumper-Tanker": {
+    "roles": ["Type 1 Engine", "Water Tanker"],
+    "max_crew": 6,
+    "water": 2500,
+    "foam": 25,
+    "training": null,
+    "station": "Fire Station",
+    "mscv_ids": [33],
+    "aliases": ["pumper tanker", "pumper-tanker"]
+  },
+  "EMS Fire Engine": {
+    "roles": ["Type 1 Engine", "ALS Ambulance"],
+    "max_crew": 6,
+    "water": 750,
+    "foam": 25,
+    "training": "ALS Training for Fire Apparatus (3 Days) — Fire Academy",
+    "station": "Fire Station — Ambulance Extension",
+    "mscv_ids": [48],
+    "aliases": ["ems fire engine", "ems fire engine/ambulance"]
+  },
+  "HazMat Ambulance": {
+    "roles": ["ALS Ambulance", "HazMat Unit"],
+    "max_crew": 3,
+    "water": 0,
+    "foam": 0,
+    "training": "HazMat Medic (3 Days) — Rescue/EMS Academy or HazMat (Fire)",
+    "station": "Ambulance Station",
+    "mscv_ids": [50],
+    "aliases": ["hazmat ambulance", "hazmat medic"]
+  },
+  "Tactical Ambulance": {
+    "roles": ["ALS Ambulance", "Non-Transport Patrol Car"],
+    "max_crew": 3,
+    "training": "Tactical Medic Training (4 Days)",
+    "station": "Ambulance Station",
+    "mscv_ids": [49],
+    "aliases": ["tactical ambulance"]
+  },
+  "ALS Rescue Ambulance": {
+    "roles": ["ALS Ambulance", "Heavy Rescue"],
+    "max_crew": 3,
+    "training": "Rank: Captain",
+    "station": "Ambulance Station",
+    "mscv_ids": [61],
+    "aliases": ["als rescue ambulance"]
+  },
+  "EMS Rescue": {
+    "roles": ["Fly-Car (ALS Upgrade)", "Heavy Rescue"],
+    "max_crew": 5,
+    "training": null,
+    "station": "Ambulance Station",
+    "mscv_ids": [28],
+    "aliases": ["ems rescue"]
+  },
+  "Heavy Rescue + Boat": {
+    "roles": ["Heavy Rescue", "Water Rescue Boat"],
+    "max_crew": 4,
+    "training": "Swift Water Rescue (7 Days)",
+    "station": "Fire Station — Water Rescue Extension",
+    "mscv_ids": [110, 90],
+    "aliases": ["heavy rescue + boat", "tactical rescue truck with boat", "tactical rescue truck"]
+  }
+}

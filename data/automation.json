@@ -1,0 +1,36 @@
+{
+  "EMS Chief": {
+    "id": 29,
+    "crew": "1-2",
+    "training": null,
+    "rule": "When an EMS Chief arrives on scene, all stabilized patients are automatically routed to the nearest hospital with available beds and the matching department.",
+    "auto_hospital": true
+  },
+  "EMS Chief + EMS MCV Dual Synergy": {
+    "ids": [29, 60],
+    "rule": "Missions with >=25 patients require EMS Mobile Command Vehicle (6 crew, EMS Mobile Command training). If you assign 2 crew members trained in EMS Mobile Command directly into an EMS Chief, that single EMS Chief vehicle satisfies both the EMS Chief and the EMS MCV mission requirements simultaneously.",
+    "required_training": "EMS Mobile Command (7 Days)",
+    "required_crew": 2
+  },
+  "Police Supervisor / Sheriff Unit": {
+    "id": 47,
+    "crew": "1-2",
+    "training": null,
+    "rule": "Automatically assigns detained suspects to available empty patrol units and routes them directly to open station holding cells.",
+    "auto_prisoner": true
+  },
+  "Fly-Car ALS Upgrade": {
+    "id": 15,
+    "crew": "1-2",
+    "rule": "A Fly-Car does not transport patients, but its presence on scene upgrades basic BLS Ambulances into full ALS Ambulances, enabling them to treat critical patient codes.",
+    "upgrade": "BLS -> ALS"
+  },
+  "Manpower Speed Multiplier": {
+    "rule": "Incident duration scales inversely with on-scene personnel. A Type 1 Engine with 6 firefighters clears fires twice as fast as one with 3 firefighters. Use Crew Carriers (12 crew) to dump raw personnel on large brush fires to accelerate completion.",
+    "example": "Type 1 Engine 6 crew = 2x speed of 3 crew"
+  },
+  "Equipment Capacity Points": {
+    "rule": "Each vehicle has an equipment load limit (e.g., Quint: 30, Type 1 Engine: 20, Patrol Car: 20). Equipping portable items allows standard vehicles to fulfill niche call requirements without buying dedicated apparatus.",
+    "capacities": "see equipment_capacity.json"
+  }
+}
