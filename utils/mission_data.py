@@ -286,28 +286,28 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                         for v in vehicles:
                             if "ambulance" in v.get("name","").lower():
                                 v["count"] = max(v["count"], current_patient_count)
-                # Try to still get credits via help if missing (helps sorting)
+                # Try to still get credits/personnel/expansions via help if missing (helps sorting & gating)
                 required_expansions = []
                 required_personnel = []
-                if credits_value == 0:
-                    try:
-                        help_btn = await page.query_selector('#mission_help')
-                        if help_btn and await help_btn.is_visible():
-                            await help_btn.click(timeout=4000)
-                            await page.wait_for_selector('#iframe-inside-container', timeout=3000)
-                            _, scraped_credits, water_from_help, foam_from_help, expansions_from_help, personnel_from_help = await gather_vehicle_requirements(page)
+                try:
+                    help_btn = await page.query_selector('#mission_help')
+                    if help_btn and await help_btn.is_visible():
+                        await help_btn.click(timeout=4000)
+                        await page.wait_for_selector('#iframe-inside-container', timeout=3000)
+                        _, scraped_credits, water_from_help, foam_from_help, expansions_from_help, personnel_from_help = await gather_vehicle_requirements(page)
+                        if credits_value == 0:
                             credits_value = scraped_credits
-                            water_needed = max(water_needed, water_from_help)
-                            foam_needed = max(foam_needed, foam_from_help)
-                            required_expansions = expansions_from_help
-                            required_personnel = personnel_from_help
-                            await page.keyboard.press('Escape')
-                            await asyncio.sleep(0.3)
+                        water_needed = max(water_needed, water_from_help)
+                        foam_needed = max(foam_needed, foam_from_help)
+                        required_expansions = expansions_from_help
+                        required_personnel = personnel_from_help
+                        await page.keyboard.press('Escape')
+                        await asyncio.sleep(0.3)
+                except Exception:
+                    try:
+                        await page.keyboard.press('Escape')
                     except Exception:
-                        try:
-                            await page.keyboard.press('Escape')
-                        except Exception:
-                            pass
+                        pass
                 
                 mission_data[mission_id] = {
                     "mission_name": f"Missing: {mission_name}",
