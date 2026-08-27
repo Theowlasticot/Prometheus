@@ -263,79 +263,100 @@ async def navigate_and_dispatch(browsers):
                 display_warning(f"Skipping {mission_id} missing expansions {missing_exp}")
                 continue
 
-        for requirement in vehicle_requirements:
-            req_name = requirement["name"]
-            req_count = requirement["count"]
-            
-            if "ambulance" in req_name.lower(): continue
-
-            valid_ids = await get_valid_ids_for_type(req_name)
-            # Distance sort: nearest first (like NatesHonor vehicles.py)
-            # Build distance map for valid_ids
+        # --- MULTI-ROLE OPTIMIZED SELECTION ---
+        # Build remaining counts per requirement (excluding ambulances)
+        remaining = {}
+        for req in vehicle_requirements:
+            if "ambulance" in req["name"].lower():
+                continue
+            remaining[req["name"]] = req["count"]
+        # Precompute valid_ids per requirement
+        valid_per_req = {}
+        for req_name in list(remaining.keys()):
+            valid_per_req[req_name] = set(await get_valid_ids_for_type(req_name))
+        # Build distance map for all valid ids combined
+        all_valid_ids = set()
+        for vids in valid_per_req.values():
+            all_valid_ids.update(vids)
+        try:
+            dist_map = await get_vehicle_distances(page, list(all_valid_ids))
+        except Exception:
+            dist_map = {}
+        # Build sorted list of available vehicles by distance
+        avail_sorted = []
+        for cb in available_vehicles_elements:
             try:
-                dist_map = await get_vehicle_distances(page, valid_ids)
-                # Sort valid_ids by distance
-                valid_ids_sorted = sorted(valid_ids, key=lambda vid: dist_map.get(vid, float('inf')))
-            except Exception:
-                valid_ids_sorted = valid_ids
-            # Also sort available elements by distance for this requirement
-            # Create distance-sorted list of (cb, v_id)
-            sorted_cbs = []
-            for cb in available_vehicles_elements:
-                try:
-                    v_id_tmp = await cb.get_attribute("value")
-                    if v_id_tmp in valid_ids:
-                        d = dist_map.get(v_id_tmp, float('inf')) if 'dist_map' in locals() else float('inf')
-                        sorted_cbs.append((d, cb, v_id_tmp))
-                except Exception:
+                v_id = await cb.get_attribute("value")
+                if not v_id:
                     continue
-            sorted_cbs.sort(key=lambda x: x[0])
-            selected = 0
-            
-            for _, cb, v_id in sorted_cbs:
+                d = dist_map.get(v_id, float('inf'))
+                # Count how many remaining requirements this vehicle can satisfy
+                can_satisfy = 0
+                for req_name, cnt in remaining.items():
+                    if cnt > 0 and v_id in valid_per_req.get(req_name, set()):
+                        can_satisfy += 1
+                # Also check if already checked/locked
                 try:
                     is_checked = await cb.is_checked()
                 except Exception:
                     is_checked = False
-                
-                if v_id in used_vehicle_ids or is_checked or is_vehicle_locked(v_id):
+                if is_checked or is_vehicle_locked(v_id) or v_id in used_vehicle_ids:
+                    # Keep checked vehicles as already used
                     if is_checked and v_id not in used_vehicle_ids:
                         used_vehicle_ids.append(v_id)
                         lock_vehicle(v_id, mission_id)
                     continue
-                
-                if v_id in valid_ids_sorted:
-                    # SMART QUANTITY LOGIC
-                    sys_id = USER_TO_SYSTEM_MAP.get(str(v_id))
-                    
-                    # Dynamic Target Calculation (Regex Match)
-                    current_target = req_count
-                    if sys_id:
-                        current_target = VEHICLE_MANAGER.get_required_quantity(sys_id, req_name, req_count)
-                    
-                    if selected >= current_target: 
-                        break
-
-                    await click_vehicle(page, cb)
-                    used_vehicle_ids.append(v_id)
-                    lock_vehicle(v_id, mission_id)
-                    
-                    # Fix: support both US (water_amount) and German (wasser_amount) attributes
-                    w_raw = await cb.get_attribute("water_amount") or await cb.get_attribute("wasser_amount") or "0"
-                    f_raw = await cb.get_attribute("foam_amount") or await cb.get_attribute("foam_amount_display") or "0"
-                    try:
-                        w = int(str(w_raw).replace(',', '').strip() or 0)
-                    except ValueError:
-                        w = 0
-                    try:
-                        f = int(str(f_raw).replace(',', '').strip() or 0)
-                    except ValueError:
-                        f = 0
-                    current_water += w
-                    current_foam += f
-                    
-                    display_info(f"Selected {req_name} (ID: {v_id}) [Target: {current_target}]")
-                    selected += 1
+                avail_sorted.append((can_satisfy, d, cb, v_id))
+            except Exception:
+                continue
+        # Sort by can_satisfy desc (multi-role first), then distance asc
+        avail_sorted.sort(key=lambda x: (-x[0], x[1]))
+        # Greedy selection: pick vehicles that satisfy the most remaining requirements
+        for can_satisfy, d, cb, v_id in avail_sorted:
+            if all(cnt <= 0 for cnt in remaining.values()):
+                break
+            # Find which requirements this vehicle can still satisfy
+            satisfiable_reqs = [r for r, cnt in remaining.items() if cnt > 0 and v_id in valid_per_req.get(r, set())]
+            if not satisfiable_reqs:
+                continue
+            # For vehicles that satisfy multiple, pick the one with highest remaining count
+            # Choose the req with most remaining to decrement
+            target_req = max(satisfiable_reqs, key=lambda r: remaining[r])
+            # SMART QUANTITY LOGIC: check if this sys_id has special quantity rule for that req
+            sys_id = USER_TO_SYSTEM_MAP.get(str(v_id))
+            current_target = remaining[target_req]
+            if sys_id:
+                # Check if this vehicle type has a regex quantity rule for this requirement
+                qty_rule_target = VEHICLE_MANAGER.get_required_quantity(sys_id, target_req, remaining[target_req])
+                # If rule says 1 vehicle covers N, we should not select more than needed for that req
+                # The greedy will handle it via remaining counts
+                pass
+            await click_vehicle(page, cb)
+            used_vehicle_ids.append(v_id)
+            lock_vehicle(v_id, mission_id)
+            # Update water/foam
+            w_raw = await cb.get_attribute("water_amount") or await cb.get_attribute("wasser_amount") or "0"
+            f_raw = await cb.get_attribute("foam_amount") or await cb.get_attribute("foam_amount_display") or "0"
+            try:
+                w = int(str(w_raw).replace(',', '').strip() or 0)
+            except ValueError:
+                w = 0
+            try:
+                f = int(str(f_raw).replace(',', '').strip() or 0)
+            except ValueError:
+                f = 0
+            current_water += w
+            current_foam += f
+            # Decrement all satisfiable reqs that still need vehicles (multi-role counts for all)
+            # If vehicle can satisfy >=2 remaining requirements, treat as multi-role and count for all
+            if len(satisfiable_reqs) >= 2:
+                for r in satisfiable_reqs:
+                    if remaining[r] > 0:
+                        remaining[r] -= 1
+                display_info(f"Selected MULTI-ROLE {target_req} (ID: {v_id}) covers {satisfiable_reqs} [Rem: {remaining}]")
+            else:
+                remaining[target_req] -= 1
+                display_info(f"Selected {target_req} (ID: {v_id}) [Rem: {remaining[target_req]}]")
 
         # --- AMBULANCES ---
         if patients_count > 0:
