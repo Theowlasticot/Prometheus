@@ -48,7 +48,7 @@ FALLBACK_SERVERS = [
     {"code":"ru","url":"https://www.dispetcher112.ru/"},
 ]
 
-app = FastAPI(title="Prometheus Dashboard", version="3.1.0", docs_url="/api/docs", redoc_url="/api/redoc")
+app = FastAPI(title="Prometheus Dashboard", version="3.2.0", docs_url="/api/docs", redoc_url="/api/redoc")
 
 # Static & templates
 app.mount("/static", StaticFiles(directory=str(PROJECT_ROOT / "dashboard" / "static")), name="static")
@@ -474,7 +474,7 @@ async def api_vehicles():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "3.1.0"}
+    return {"status": "ok", "version": "3.2.0"}
 
 @app.get("/api/servers")
 async def api_servers():
