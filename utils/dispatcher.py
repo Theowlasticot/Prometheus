@@ -517,7 +517,35 @@ async def navigate_and_dispatch(browsers):
             btn = await page.query_selector('#alert_btn')
             if btn:
                 if len(used_vehicle_ids) == 0:
-                    display_info(f"⛔ No vehicles selected for {mission_id}. Skipping dispatch click.")
+                    # Diagnostic: list which requirements had no valid vehicles in garage
+                    try:
+                        missing_types = []
+                        # Build set of available vids for quick lookup
+                        avail_vids = set()
+                        for cb in available_vehicles_elements:
+                            try:
+                                v = await cb.get_attribute("value")
+                                if v:
+                                    avail_vids.add(v)
+                            except Exception:
+                                continue
+                        for req in vehicle_requirements:
+                            if "ambulance" in req["name"].lower():
+                                continue
+                            valid = await get_valid_ids_for_type(req["name"])
+                            if not valid:
+                                missing_types.append(f"{req['name']} (no garage type)")
+                            else:
+                                # Check if any valid is in avail
+                                if not any(vid in avail_vids for vid in valid):
+                                    missing_types.append(f"{req['name']} (no available, need {req['count']} have {len(valid)} types)")
+                        if missing_types:
+                            display_warning(f"⛔ No vehicles for {mission_id}: missing {', '.join(missing_types[:3])}{'...' if len(missing_types)>3 else ''} | have {len(avail_vids)} avail, {len(vehicle_requirements)} reqs")
+                        else:
+                            display_info(f"⛔ No vehicles selected for {mission_id}. Skipping dispatch click.")
+                    except Exception as e:
+                        display_warning(f"⛔ No vehicles for {mission_id} (diag err {e})")
+                        display_info(f"⛔ No vehicles selected for {mission_id}. Skipping dispatch click.")
                     continue
                 try:
                     is_disabled = await btn.get_attribute("disabled")
