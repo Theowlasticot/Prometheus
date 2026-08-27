@@ -28,25 +28,55 @@ def free_all_vehicles():
     _LOCKED_VEHICLES.clear()
 
 async def get_vehicle_distances(page, vehicle_ids: list[str]) -> dict[str, float]:
-    """Read #vehicle_sort_{id} sortvalue as distance, like NatesHonor vehicles.py:8."""
-    distances = {}
-    for vid in vehicle_ids:
-        try:
-            # Try sortvalue attribute
-            el = await page.query_selector(f'#vehicle_sort_{vid}')
-            if el:
-                val = await el.get_attribute('sortvalue')
-                if val is not None:
-                    try:
-                        distances[vid] = float(val.replace(',', '.'))
-                        continue
-                    except ValueError:
-                        pass
-            # Fallback: try data attribute or text
-            distances[vid] = float('inf')
-        except Exception:
-            distances[vid] = float('inf')
-    return distances
+    """Batch JS like NatesHonor vehicles.py:8 — single evaluate vs loop."""
+    if not vehicle_ids:
+        return {}
+    try:
+        script = """
+        (ids) => {
+            const result = {};
+            for (const id of ids) {
+                const el = document.querySelector(`#vehicle_sort_${id}`);
+                if (el) {
+                    const val = el.getAttribute('sortvalue');
+                    result[id] = val ? val.replace(',', '.') : 'inf';
+                } else {
+                    result[id] = 'inf';
+                }
+            }
+            return result;
+        }
+        """
+        raw = await page.evaluate(script, vehicle_ids)
+        distances = {}
+        for vid in vehicle_ids:
+            val = raw.get(vid, 'inf')
+            if val == 'inf' or val is None:
+                distances[vid] = float('inf')
+            else:
+                try:
+                    distances[vid] = float(str(val).replace(',', '.'))
+                except ValueError:
+                    distances[vid] = float('inf')
+        return distances
+    except Exception:
+        # Fallback loop (old)
+        distances = {}
+        for vid in vehicle_ids:
+            try:
+                el = await page.query_selector(f'#vehicle_sort_{vid}')
+                if el:
+                    val = await el.get_attribute('sortvalue')
+                    if val is not None:
+                        try:
+                            distances[vid] = float(val.replace(',', '.'))
+                            continue
+                        except ValueError:
+                            pass
+                distances[vid] = float('inf')
+            except Exception:
+                distances[vid] = float('inf')
+        return distances
 
 # Dynamic manager — uses shared helper from vehicle_manager (DRY)
 def _create_manager():
