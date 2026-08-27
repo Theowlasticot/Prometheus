@@ -1,7 +1,9 @@
 import asyncio
+import random
 import re
 from utils.pretty_print import display_info, display_error, display_warning
 from data.config_settings import get_hiring_mode, get_server_url
+from utils.humanize import jitter, human_sleep, random_mouse_jitter, human_click
 
 async def manage_personnel(browser):
     hiring_mode = get_hiring_mode()
@@ -37,11 +39,20 @@ async def manage_personnel(browser):
         building_ids = list(set(building_ids))
         display_info(f"Found {len(building_ids)} buildings to check.")
 
-        # 2. Iterate through buildings
-        for b_id in building_ids:
+        # 2. Iterate through buildings — humanized with jitter and occasional pause
+        for idx, b_id in enumerate(building_ids):
             try:
+                # Human-like pause every 7-9 buildings
+                if idx > 0 and idx % random.randint(7, 9) == 0:
+                    await human_sleep(1.8, 0.6)
+                    if random.random() < 0.3:
+                        await random_mouse_jitter(page, moves=1)
                 await page.goto(f"{base}/buildings/{b_id}", timeout=30000)
                 await page.wait_for_load_state('domcontentloaded', timeout=15000)
+                await human_sleep(0.45, 0.5)
+                if random.random() < 0.12:
+                    await page.mouse.wheel(0, random.randint(60, 180))
+                    await human_sleep(0.25, 0.6)
                 
                 # Check Personnel Count vs Target — i18n (EN/DE/FR/NL)
                 personnel_dd = None
@@ -172,19 +183,26 @@ async def handle_hiring(page, building_id, mode):
             "De wervingsfase loopt nog",
         ]
         if any(p in content for p in active_phrases):
-            # Recruitment active, skip
+            # Recruitment active, skip — human pause
+            await human_sleep(0.35, 0.6)
             return
 
         display_info(f"Station {building_id}: Starting recruitment...")
 
-        # Click the appropriate button based on mode
+        # Click the appropriate button based on mode — humanized
         if mode in [1, 2, 3]:
-            # Button href: /buildings/3921950/hire_do/1
             btn_selector = f"a[href='/buildings/{building_id}/hire_do/{mode}']"
             btn = await page.query_selector(btn_selector)
             if btn:
-                await btn.click()
+                # Human-like hover + click
+                try:
+                    await btn.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                await human_sleep(0.32, 0.6)
+                await human_click(page, btn)
                 display_info(f"Started {mode}-day recruitment for {building_id}.")
+                await human_sleep(0.7, 0.5)
             else:
                 display_error(f"Could not find {mode}-day button for {building_id}.")
                 
@@ -193,8 +211,13 @@ async def handle_hiring(page, building_id, mode):
             btn_selector = f"a[href='/buildings/{building_id}/hire_do/3']" # Defaulting to max
             btn = await page.query_selector(btn_selector)
             if btn:
-                await btn.click()
-                await page.wait_for_timeout(500)
+                try:
+                    await btn.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                await human_sleep(0.3, 0.5)
+                await human_click(page, btn)
+                await human_sleep(0.6, 0.5)
                 display_info(f"Started recruitment (Automatic/Max) for {building_id}.")
 
     except asyncio.CancelledError:

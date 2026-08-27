@@ -1,10 +1,12 @@
 import asyncio
 import json
 import os
+import random
 import re
 from pathlib import Path
 from utils.pretty_print import display_info, display_error
 from data.config_settings import get_server_url
+from utils.humanize import jitter, human_sleep, random_mouse_jitter
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -97,10 +99,15 @@ async def process_vehicle_chunk(browser, vehicle_ids, thread_id):
     for index, v_id in enumerate(vehicle_ids):
         if index % 20 == 0:
             display_info(f"Thread {thread_id}: Processing {index}/{total}")
+        # Humanized delay between vehicle pages (0.32-0.85s vs fixed)
+        await human_sleep(0.38, 0.62)
+        if random.random() < 0.08:
+            await random_mouse_jitter(page, moves=1)
             
         try:
             base = get_server_url().rstrip("/")
             await page.goto(f"{base}/vehicles/{v_id}", timeout=30000)
+            await human_sleep(0.42, 0.45)
             
             type_id = None
             

@@ -1,8 +1,10 @@
 import re
 import asyncio
+import random
 
 from utils.pretty_print import display_info, display_error, display_warning
 from data.config_settings import get_server_url, get_allow_alliance_hospitals, get_allow_alliance_cells, get_max_distance
+from utils.humanize import jitter, human_sleep, random_mouse_jitter
 
 def _parse_distance(text):
     """Parse distance from text like '5.3 km', '3.2 mi', 'Distance: 5.3 km (Free: 2)' handling commas."""

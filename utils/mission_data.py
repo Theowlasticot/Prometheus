@@ -7,6 +7,8 @@ from pathlib import Path
 from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import VehicleManager, get_manager_for_code
 from data.config_settings import get_server_url, is_alliance_mission_name
+from utils.humanize import jitter, human_sleep, random_mouse_jitter
+import random
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -139,8 +141,11 @@ async def gather_mission_info(mission_entries, browser, thread_id):
             display_info(f"Thread {thread_id}: Processing mission {index+1}/{len(mission_entries)} (ID: {mission_id})")
             base = get_server_url().rstrip("/")
             await page.goto(f"{base}/missions/{mission_id}", timeout=30000)
-            # Be nice to server
-            await asyncio.sleep(0.3)
+            # Be nice to server + humanize
+            await human_sleep(0.32, 0.55)
+            if random.random() < 0.12:
+                await random_mouse_jitter(page, moves=1)
+                await human_sleep(0.18, 0.5)
             
             try:
                 await page.wait_for_selector('#missionH1', timeout=5000)

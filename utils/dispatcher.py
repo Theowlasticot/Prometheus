@@ -6,7 +6,8 @@ from pathlib import Path
 from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import VehicleManager, get_manager_for_code
 from data.config_settings import get_share_alliance, get_process_alliance, get_server_code, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits
-from utils.building_data import load_building_data, has_expansion
+from utils.humanize import jitter, human_sleep, random_mouse_jitter, human_click
+import random
 
 # Trailer types that require towing vehicle (cannot dispatch alone)
 TRAILER_IDS = {7, 31, 35, 36, 37, 38, 41, 46, 59}  # water trailer, foam trailer, etc. — approximate US
@@ -209,8 +210,14 @@ async def navigate_and_dispatch(browsers):
             base = get_server_url().rstrip("/")
             await page.goto(f"{base}/missions/{mission_id}", timeout=30000)
             await page.wait_for_selector('#missionH1', timeout=5000)
+            # Human-like pause after page load + occasional scroll
+            await human_sleep(0.42, 0.55)
+            if random.random() < 0.18:
+                await page.mouse.wheel(0, random.randint(80, 260))
+                await human_sleep(0.22, 0.6)
         except Exception as e:
             display_error(f"Mission {mission_id} failed to load: {e}")
+            await human_sleep(0.9, 0.4)
             continue
 
         if is_missing_mission or is_alliance_mission:
@@ -691,8 +698,20 @@ async def check_mission_requirements_global_percent(page, mission_data):
     return False, f"Insufficient: {total_found}/{total_needed} vehicles found."
 
 async def click_vehicle(page, checkbox):
-    await page.evaluate('(checkbox) => checkbox.scrollIntoView()', checkbox)
+    # Humanized click: scroll, small jitter, then JS click + change event
+    try:
+        await page.evaluate('(el) => el.scrollIntoView({block: "center"})', checkbox)
+    except Exception:
+        try:
+            await checkbox.scroll_into_view_if_needed()
+        except Exception:
+            pass
+    await human_sleep(0.18, 0.65)
+    # Occasional mouse jitter before click
+    if random.random() < 0.22:
+        await random_mouse_jitter(page, moves=1)
     await page.evaluate('(checkbox) => { checkbox.click(); checkbox.dispatchEvent(new Event("change", { bubbles: true })); }', checkbox)
+    await human_sleep(0.12, 0.55)
 
 async def get_valid_ids_for_type(target_name):
     user_vehicle_data = await load_vehicle_data() 

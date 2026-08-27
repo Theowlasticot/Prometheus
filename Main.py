@@ -14,6 +14,8 @@ from utils.transport import handle_transport_requests
 from utils.vehicle_data import gather_vehicle_data
 from utils.personnel_manager import manage_personnel
 from utils.building_data import gather_building_data
+from utils.humanize import jitter, human_sleep
+import random
 
 async def transport_logic(browser):
     display_info("Starting transportation logic.")
@@ -21,14 +23,22 @@ async def transport_logic(browser):
         try:
             display_info("Handling transport requests.")
             await handle_transport_requests(browser)
-            display_info(f"Waiting {get_transport_delay()}s before next transport.")
-            await asyncio.sleep(get_transport_delay())
+            # Humanized transport delay with jitter ±25%
+            base_delay = get_transport_delay()
+            human_delay = jitter(base_delay, 0.25)
+            # Occasional micro-break (2% chance extra 12-28s like human pause)
+            if random.random() < 0.02:
+                extra = random.uniform(12, 28)
+                human_delay += extra
+                display_info(f"Human break: +{extra:.0f}s")
+            display_info(f"Waiting {human_delay:.1f}s before next transport.")
+            await asyncio.sleep(human_delay)
         except asyncio.CancelledError:
             display_info("Transport logic cancelled.")
             raise
         except Exception as e:
             display_error(f"Error in transport logic: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(jitter(5, 0.6))
 
 async def mission_logic(browsers_for_missions):
     display_info("Starting mission logic.")
@@ -140,8 +150,18 @@ async def mission_logic(browsers_for_missions):
             display_info("Navigating and dispatching missions.")
             await navigate_and_dispatch(browsers_for_missions)
             
-            display_info(f"Waiting {get_mission_delay()}s before checking missions again.")
-            await asyncio.sleep(get_mission_delay())
+            # Humanized mission delay with jitter ±30%
+            base_mission = get_mission_delay()
+            human_mission = jitter(base_mission, 0.30)
+            # Occasional longer human pause (3% chance)
+            if random.random() < 0.03:
+                extra = random.uniform(18, 42)
+                human_mission += extra
+                display_info(f"Human pause: +{extra:.0f}s")
+            display_info(f"Waiting {human_mission:.1f}s before checking missions again.")
+            await asyncio.sleep(human_mission)
+            # Small extra human jitter between loops
+            await human_sleep(0.6, 0.6)
             
         except asyncio.CancelledError:
             display_info("Mission logic cancelled.")
