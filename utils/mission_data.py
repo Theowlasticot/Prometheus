@@ -297,8 +297,10 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                         if help_btn and await help_btn.is_visible():
                             await help_btn.click(timeout=4000)
                             await page.wait_for_selector('#iframe-inside-container', timeout=3000)
-                            _, scraped_credits = await gather_vehicle_requirements(page)
+                            _, scraped_credits, water_from_help, foam_from_help = await gather_vehicle_requirements(page)
                             credits_value = scraped_credits
+                            water_needed = max(water_needed, water_from_help)
+                            foam_needed = max(foam_needed, foam_from_help)
                             await page.keyboard.press('Escape')
                             await asyncio.sleep(0.3)
                     except Exception:
@@ -327,8 +329,10 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 if help_btn and await help_btn.is_visible():
                     await help_btn.click(timeout=4000)
                     await page.wait_for_selector('#iframe-inside-container', timeout=5000)
-                    raw_requirements, scraped_credits = await gather_vehicle_requirements(page)
+                    raw_requirements, scraped_credits, water_from_help, foam_from_help = await gather_vehicle_requirements(page)
                     credits_value = scraped_credits
+                    water_needed = max(water_needed, water_from_help)
+                    foam_needed = max(foam_needed, foam_from_help)
                     await page.keyboard.press('Escape')
                     await asyncio.sleep(0.5)
                 else:
@@ -400,7 +404,9 @@ def remove_plural_suffix(vehicle_name):
 
 async def gather_vehicle_requirements(page):
     vehicle_requirements = []
-    credits = 0 
+    credits = 0
+    water_needed = 0
+    foam_needed = 0
     
     # Try language-specific headers first, then fallback to generic
     # US: Vehicle and Personnel Requirements, Reward and Precondition
@@ -473,6 +479,25 @@ async def gather_vehicle_requirements(page):
             
             lower_name = raw_name.lower()
             if "probability" in lower_name or "%" in lower_name or "patient" in lower_name: continue
+
+            # Handle water/foam resource requirements (e.g., "Water required: 16000", "Foam required: 175")
+            # These appear in help table as non-vehicle rows and should be captured as water_needed/foam_needed
+            is_water_req = any(w in lower_name for w in ["water", "wasser", "eau", "liters", "gallons", "gal"])
+            is_foam_req = any(w in lower_name for w in ["foam", "mousse", "schaum", "schuim", "ecume"])
+            if (is_water_req or is_foam_req) and any(k in lower_name for k in ["required", "needed", "benötigt", "manque", "benodigd", "need"]):
+                # Ensure it's not a vehicle like "Water Tanker" (which contains tanker)
+                if not any(valid in lower_name for valid in ["tanker", "tender", "vehicle", "rescue", "trailer", "boat"]):
+                    match = re.search(r'([\d,]+)', count_text)
+                    if match:
+                        try:
+                            val = int(match.group(1).replace(',', '').strip())
+                            if is_foam_req:
+                                foam_needed = max(foam_needed, val)
+                            else:
+                                water_needed = max(water_needed, val)
+                            continue  # don't add as vehicle
+                        except ValueError:
+                            pass
             
             if any(k in lower_name for k in NON_VEHICLE_KEYWORDS):
                 if not any(valid in lower_name for valid in ["tanker", "tender", "vehicle", "rescue", "trailer", "boat"]):
@@ -487,7 +512,7 @@ async def gather_vehicle_requirements(page):
             
             vehicle_requirements.append({"name": vehicle_name, "count": vehicle_count})
 
-    return vehicle_requirements, credits
+    return vehicle_requirements, credits, water_needed, foam_needed
 
 async def handle_prisoner_transport(page):
     try:
