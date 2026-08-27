@@ -51,6 +51,106 @@ class VehicleManager:
         self.vehicle_capabilities = {} # Map: System ID -> set(["FOAM", "WATER", "SWAT", "PRISONER", ...])
         
         self.load_database()
+        self.load_additional_data()
+
+    def load_additional_data(self):
+        """Load multi-role, trailers, training, equipment_capacity, automation from data/ directory (wiki/forum + your table). Keep in sync with GitHub .mscv via remote sync for vehicle definitions, but these matrices are local and updated via git."""
+        base = Path(__file__).resolve().parent.parent / "data"
+        try:
+            # Multi-role
+            mr_path = base / "multi_role.json"
+            if mr_path.exists():
+                self.multi_role = json.loads(mr_path.read_text(encoding="utf-8"))
+            else:
+                self.multi_role = {}
+        except Exception as e:
+            display_warning(f"Could not load multi_role.json: {e}")
+            self.multi_role = {}
+        try:
+            tr_path = base / "trailers.json"
+            if tr_path.exists():
+                self.trailers = json.loads(tr_path.read_text(encoding="utf-8"))
+            else:
+                self.trailers = {}
+        except Exception as e:
+            display_warning(f"Could not load trailers.json: {e}")
+            self.trailers = {}
+        try:
+            trn_path = base / "training.json"
+            if trn_path.exists():
+                self.training = json.loads(trn_path.read_text(encoding="utf-8"))
+            else:
+                self.training = {}
+        except Exception as e:
+            display_warning(f"Could not load training.json: {e}")
+            self.training = {}
+        try:
+            eq_path = base / "equipment_capacity.json"
+            if eq_path.exists():
+                self.equipment_capacity = json.loads(eq_path.read_text(encoding="utf-8"))
+            else:
+                self.equipment_capacity = {}
+        except Exception as e:
+            display_warning(f"Could not load equipment_capacity.json: {e}")
+            self.equipment_capacity = {}
+        try:
+            auto_path = base / "automation.json"
+            if auto_path.exists():
+                self.automation = json.loads(auto_path.read_text(encoding="utf-8"))
+            else:
+                self.automation = {}
+        except Exception as e:
+            display_warning(f"Could not load automation.json: {e}")
+            self.automation = {}
+
+    def get_required_training(self, vehicle_id: int) -> list:
+        """Return list of required trainings for a vehicle from training.json (search by mscv_ids)."""
+        trainings = []
+        try:
+            for academy, courses in self.training.items():
+                for course, info in courses.items():
+                    if vehicle_id in info.get("mscv_ids", []):
+                        trainings.append(f"{academy}: {course} ({info.get('days')}d)")
+        except Exception:
+            pass
+        return trainings
+
+    def get_equipment_capacity(self, vehicle_name: str) -> int:
+        """Get equipment capacity for vehicle name (e.g., Quint 30, Type 1 20)."""
+        try:
+            # Direct match
+            if vehicle_name in self.equipment_capacity:
+                return self.equipment_capacity[vehicle_name].get("capacity", 0)
+            # Normalize lookup
+            norm = self.normalize(vehicle_name)
+            for k, v in self.equipment_capacity.items():
+                if k == "Equipment":
+                    continue
+                if self.normalize(k) == norm:
+                    return v.get("capacity", 0)
+        except Exception:
+            pass
+        return 0
+
+    def is_trailer(self, vehicle_id: int) -> bool:
+        """Check if vehicle is a trailer (needs towing)."""
+        try:
+            for tname, tinfo in self.trailers.items():
+                if tinfo.get("id") == vehicle_id:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def get_towing_vehicles(self, trailer_id: int) -> list:
+        """Get eligible towing vehicle ids for a trailer."""
+        try:
+            for tname, tinfo in self.trailers.items():
+                if tinfo.get("id") == trailer_id:
+                    return tinfo.get("towing_ids", [])
+        except Exception:
+            pass
+        return []
 
     def normalize(self, text):
         """Standardizes text for index lookups."""
@@ -83,14 +183,22 @@ class VehicleManager:
                     return
             else:
                 return
-        # Keywords to detect capabilities in ANY language (for future updates uWu)
+        # Keywords to detect capabilities in ANY language (wiki/forum + your table)
         KEYWORD_MAP = {
             "FOAM": ["foam", "mousse", "schaum", "schuim", "écume"],
             "WATER": ["water", "eau", "wasser", "liters", "gallons", "gal\\.", "l\\."],
             "PERSONNEL": ["personnel", "pompier", "firefighter", "feuerwehrmann", "policier", "police", "swat"],
             "PRISONER": ["prisoner", "prisonnier", "gefangene", "arrest"],
             "PATIENT": ["patient", "transport", "ambulance", "hospital"],
-            "TOW": ["tow", "wrecker", "abschlepp"]
+            "TOW": ["tow", "wrecker", "abschlepp", "tiller"],
+            "HAZMAT": ["hazmat", "haz mat", "hazmat", "hazmat", "hazmat"],
+            "HRV": ["heavy rescue", "heavy rescue", "rescue"],
+            "PLATFORM": ["platform", "ladder", "quint", "tower ladder"],
+            "ARFF": ["arff", "crash tender", "airport"],
+            "SWIFTWATER": ["swift water", "swiftwater", "water rescue", "boat"],
+            "TACTICAL": ["tactical", "tactical"],
+            "ALS": ["als", "advanced life support"],
+            "OCEAN_NAV": ["ocean navigation", "ocean nav", "coastal"],
         }
 
         # 1. Load Generic Categories (Vehicle.mscv)

@@ -1,0 +1,178 @@
+{
+  "Tanker Semi Trailer": {
+    "id": 77,
+    "function": "10,000 Gallons Bulk Water",
+    "towing_vehicles": ["Crew Cab Semi"],
+    "towing_ids": [41],
+    "required_training": "Truck Driver's License (2 Days)",
+    "aliases": ["tanker semi trailer", "tanker semi"]
+  },
+  "Tanker Trailer": {
+    "id": 78,
+    "function": "1,000 Gallons Water",
+    "towing_vehicles": ["Utility Unit", "Type 2 Engine", "Battalion Chief", "Rescue Engine", "Crew Carrier"],
+    "towing_ids": [8, 1, 10, 4, 18],
+    "required_training": null,
+    "aliases": ["tanker trailer"]
+  },
+  "Mass Casualty Trailer": {
+    "id": 57,
+    "function": "Treats & transports mass patients (Large, up to 15)",
+    "towing_vehicles": ["Crew Cab Semi", "Heavy Semi Unit"],
+    "towing_ids": [41],
+    "required_training": "Truck Driver's License",
+    "aliases": ["mass casualty trailer", "mass casualty"]
+  },
+  "Mass Casualty Trailer Small": {
+    "id": 58,
+    "function": "Treats mass patients (Small, up to 7)",
+    "towing_vehicles": ["Crew Cab Semi"],
+    "towing_ids": [41],
+    "required_training": "Truck Driver's License",
+    "aliases": ["small mass casualty trailer"]
+  },
+  "Boat Trailer": {
+    "id": 73,
+    "function": "Water Rescue Deployment",
+    "towing_vehicles": ["Utility Unit", "Heavy Rescue", "Battalion Chief"],
+    "towing_ids": [8, 4, 10],
+    "required_training": "Swift Water Rescue (all crew in towing unit)",
+    "aliases": ["boat trailer", "small coastal boat trailer", "light boat trailer"]
+  },
+  "Double Light Boat Trailer": {
+    "id": 95,
+    "function": "Water Rescue Deployment (double)",
+    "towing_vehicles": ["Utility Unit", "Heavy Rescue"],
+    "towing_ids": [8, 4],
+    "required_training": "Swift Water Rescue",
+    "aliases": ["double light boat trailer"]
+  },
+  "Mounted Police Trailer": {
+    "id": 85,
+    "function": "Transports Mounted Patrol Horses",
+    "towing_vehicles": ["Police Patrol Car", "Police SUV"],
+    "towing_ids": [10, 19],
+    "required_training": "Mounted Police Training (4 Days)",
+    "aliases": ["mounted police trailer"]
+  },
+  "Small K9 Carrier": {
+    "id": 81,
+    "function": "Transports multiple K9 units",
+    "towing_vehicles": ["Patrol Car", "Police Van", "SUV"],
+    "towing_ids": [10, 19],
+    "required_training": "K-9 Training (3 Days)",
+    "aliases": ["small k9 carrier"]
+  },
+  "Large K9 Carrier": {
+    "id": 82,
+    "function": "Transports multiple K9 units (large)",
+    "towing_vehicles": ["Patrol Car", "Police Van", "SUV"],
+    "towing_ids": [10, 19],
+    "required_training": "K-9 Training",
+    "aliases": ["large k9 carrier", "k9 carrier"]
+  },
+  "Equipment Trailer Small": {
+    "id": 96,
+    "function": "Hauls extra equipment slots (10 capacity)",
+    "towing_vehicles": ["Utility Unit", "Crew Carrier", "Wrecker"],
+    "towing_ids": [8, 12],
+    "required_training": null,
+    "aliases": ["small heavy rescue trailer", "equipment trailer small"]
+  },
+  "Equipment Trailer Large": {
+    "id": 97,
+    "function": "Hauls extra equipment slots (30 capacity)",
+    "towing_vehicles": ["Utility Unit", "Crew Carrier", "Wrecker"],
+    "towing_ids": [8, 12],
+    "required_training": null,
+    "aliases": ["large heavy rescue trailer", "equipment trailer large"]
+  },
+  "Small HazMat Trailer": {
+    "id": 98,
+    "function": "HazMat equipment",
+    "towing_vehicles": ["Utility Unit", "Crew Carrier"],
+    "towing_ids": [8, 12],
+    "required_training": "HazMat",
+    "aliases": ["small hazmat trailer"]
+  },
+  "Large HazMat Trailer": {
+    "id": 99,
+    "function": "HazMat equipment large",
+    "towing_vehicles": ["Utility Unit", "Crew Carrier"],
+    "towing_ids": [8, 12],
+    "required_training": "HazMat",
+    "aliases": ["large hazmat trailer"]
+  },
+  "Mobile Air Trailer": {
+    "id": 92,
+    "function": "Mobile Air",
+    "towing_vehicles": ["Utility Unit"],
+    "towing_ids": [8],
+    "required_training": null,
+    "aliases": ["mobile air trailer"]
+  },
+  "Light Tower Trailer": {
+    "id": 93,
+    "function": "Light Tower",
+    "towing_vehicles": ["Utility Unit"],
+    "towing_ids": [8],
+    "required_training": null,
+    "aliases": ["light tower trailer"]
+  },
+  "Energy Generator Trailer": {
+    "id": 94,
+    "function": "Energy Generator",
+    "towing_vehicles": ["Utility Unit"],
+    "towing_ids": [8],
+    "required_training": null,
+    "aliases": ["energy generator trailer"]
+  },
+  "Riot Police Trailer": {
+    "id": 85,
+    "function": "Riot Police",
+    "towing_vehicles": ["Utility Unit"],
+    "towing_ids": [8],
+    "required_training": null,
+    "aliases": ["riot police trailer"]
+  },
+  "Flood Equipment Trailer": {
+    "id": 91,
+    "function": "Flood Control",
+    "towing_vehicles": ["Utility Unit"],
+    "towing_ids": [8],
+    "required_training": null,
+    "aliases": ["flood equipment trailer"]
+  },
+  "Dozer Trailer": {
+    "id": 40,
+    "function": "Dozer / Heavy Machinery",
+    "towing_vehicles": ["Crew Cab Semi"],
+    "towing_ids": [41],
+    "required_training": "Heavy Machinery Operating (3 Days)",
+    "aliases": ["dozer trailer"]
+  },
+  "Tiller Ladder Trailer": {
+    "id": 100,
+    "function": "Tiller Ladder",
+    "towing_vehicles": ["Tiller Cab"],
+    "towing_ids": [100],
+    "required_training": null,
+    "aliases": ["tiller ladder trailer"]
+  },
+  "Police Boat Trailer": {
+    "id": 111,
+    "function": "Police Boat",
+    "towing_vehicles": ["Patrol Car", "SUV"],
+    "towing_ids": [10, 19],
+    "required_training": "Ocean Navigation",
+    "aliases": ["police boat trailer small"]
+  },
+  "Large Police Boat Trailer": {
+    "id": 112,
+    "function": "Large Police Boat",
+    "towing_vehicles": ["Patrol Car", "SUV"],
+    "towing_ids": [10, 19],
+    "required_training": "Ocean Navigation",
+    "aliases": ["large police boat trailer"]
+  }
+}

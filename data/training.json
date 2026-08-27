@@ -1,0 +1,37 @@
+{
+  "Fire Academy": {
+    "HazMat": {"days": 3, "unlocks": ["HazMat Unit", "HazMat Decontamination Trailers"], "mscv_ids": [9, 98, 99], "station": "Fire Station"},
+    "Mobile Command / MCV": {"days": 7, "unlocks": ["Mobile Command Vehicle (MCV)"], "mscv_ids": [12], "station": "Fire Station"},
+    "Swiftwater Rescue": {"days": 7, "unlocks": ["Heavy Rescue + Boat", "Boat Trailers", "Water Rescue Craft"], "mscv_ids": [110, 90, 73, 95], "station": "Fire Station — Water Rescue Extension"},
+    "ARFF": {"days": 3, "unlocks": ["Airport Crash Tenders", "Airport Foam Apparatus"], "mscv_ids": [17, 79, 80], "station": "Fire Station — Airport Extension"},
+    "Ocean Navigation": {"days": 7, "unlocks": ["Large Fire Boats", "Ocean Rescue Vessels"], "mscv_ids": [22, 21, 30], "station": "Fire/Police Station"},
+    "Heavy Machinery Operating": {"days": 3, "unlocks": ["Dozer Trailer"], "mscv_ids": [40], "station": "Fire Station"},
+    "Truck Driver's License": {"days": 2, "unlocks": ["Crew Cab Semi (for Mass Casualty and Bulk Tanker trailers)"], "mscv_ids": [41], "station": "Fire Station"},
+    "Airborne firefighting": {"days": 5, "unlocks": ["Water drop helicopter", "Air tanker", "Heavy air tanker"], "mscv_ids": [35, 36, 37], "station": "Firefighting Plane Station"}
+  },
+  "Rescue / EMS Academy": {
+    "EMS Mobile Command": {"days": 7, "unlocks": ["EMS MCV and EMS Chief command upgrade"], "mscv_ids": [60, 29], "station": "Ambulance Station"},
+    "Hazmat Medic Training": {"days": 3, "unlocks": ["HazMat Ambulance"], "mscv_ids": [50], "station": "Ambulance Station"},
+    "Tactical Medic Training": {"days": 4, "unlocks": ["Tactical Ambulance"], "mscv_ids": [49], "station": "Ambulance Station"},
+    "ALS Medical Training for Fire Apparatus": {"days": 3, "unlocks": ["EMS Fire Engine"], "mscv_ids": [48], "station": "Fire Station — Ambulance Extension"},
+    "Truck Driver's License": {"days": 2, "unlocks": ["Crew Cab Semi"], "mscv_ids": [41], "station": "Ambulance Station"}
+  },
+  "Police Academy": {
+    "SWAT Training": {"days": 5, "unlocks": ["SWAT Armored Vehicle", "SWAT SUV"], "mscv_ids": [16, 26], "station": "Police Station"},
+    "K-9 Training": {"days": 3, "unlocks": ["K-9 Units and K-9 Transport Carriers"], "mscv_ids": [19, 81, 82], "station": "Police Station"},
+    "Police Aviation": {"days": 7, "unlocks": ["Police Helicopters"], "mscv_ids": [14], "station": "Police Aviation Station"},
+    "Police Motorcycle": {"days": 2, "unlocks": ["Motorcycle Patrol Units"], "mscv_ids": [11], "station": "Police Station"},
+    "Mounted Police": {"days": 4, "unlocks": ["Mounted Horse Units and Mounted Trailers"], "mscv_ids": [85], "station": "Police Station"},
+    "Sheriff": {"days": 5, "unlocks": ["Sheriff Unit"], "mscv_ids": [47], "station": "Police Station"},
+    "FBI Mobile Center Commander": {"days": 7, "unlocks": ["FBI Mobile Command Center"], "mscv_ids": [44], "station": "Federal Police Station"},
+    "FBI Bomb Technician": {"days": 5, "unlocks": ["FBI Bomb Technician Vehicle"], "mscv_ids": [45], "station": "Federal Police Station"},
+    "FBI Drone Operator": {"days": 5, "unlocks": ["FBI Surveillance Drone"], "mscv_ids": [46], "station": "Federal Police Station"}
+  },
+  "Coastal Rescue School": {
+    "Coastal Air Rescue Operations": {"days": 5, "unlocks": ["Lifeguard Rescue, Coastal Helicopter, Coast Guard Plane"], "mscv_ids": [30, 35], "station": "Coastal Rescue Station"},
+    "Lifeguard Supervisor": {"days": 5, "unlocks": ["Lifeguard Supervisor"], "mscv_ids": [32], "station": "Lifeguard Post"},
+    "Lifeguard Training": {"days": 5, "unlocks": ["Lifeguard Rescue"], "mscv_ids": [30], "station": "Lifeguard Post"},
+    "TACLET": {"days": 3, "unlocks": ["TACLET"], "mscv_ids": [], "station": "Coastal Rescue Station"},
+    "Ocean Navigation": {"days": 5, "unlocks": ["Large Coastal Boat"], "mscv_ids": [21, 22], "station": "Coastal Rescue Station"}
+  }
+}

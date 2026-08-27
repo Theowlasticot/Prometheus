@@ -32,6 +32,7 @@ logs/*.jsonl
 .DS_Store
 data/vehicle_data.json
 data/mission_data.json
+data/building_data.json
 data/*.tmp
 assets_cache/
 assets_cache/*.json
