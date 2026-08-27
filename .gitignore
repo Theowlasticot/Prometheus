@@ -45,8 +45,10 @@ assets_cache/*/*.mscv
 *.swo
 *~
 
-# Keep config.ini tracked (example credentials empty) but ignore local overrides if you create config.local.ini
-# config.ini
+# Credentials — never commit real config.ini
+config.ini
+!config.example.ini
+config.local.ini
 
 # Playwright
 test-results/

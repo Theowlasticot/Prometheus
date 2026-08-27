@@ -144,6 +144,22 @@ async def navigate_and_dispatch(browsers):
 
     display_info(f"Loaded {len(sorted_missions)} missions. Processing...")
 
+    # --- Vehicle lock cleanup: free vehicles for missions no longer pending ---
+    try:
+        current_ids = set(mission_data.keys())
+        locked_mids = set(_LOCKED_VEHICLES.values())
+        stale = locked_mids - current_ids
+        for mid in stale:
+            free_up_vehicles(mid)
+            display_info(f"Freed vehicles for completed mission {mid}")
+        if len(_LOCKED_VEHICLES) > 400:
+            display_warning(f"Lock table large ({len(_LOCKED_VEHICLES)}), clearing stale locks")
+            free_all_vehicles()
+        if locked_mids:
+            display_info(f"Lock table: {len(_LOCKED_VEHICLES)} vehicles locked across {len(locked_mids)} missions")
+    except Exception as e:
+        display_warning(f"Lock cleanup error: {e}")
+
     for mission_id, data in sorted_missions:
         mission_name = data.get("mission_name", "Unknown Mission")
         credits_val = data.get("credits", 0)

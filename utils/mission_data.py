@@ -168,18 +168,21 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 for alert in alerts:
                     text = (await alert.inner_text()).strip()
                     
-                    # DATABASE LOOKUP: "What does this alert mean?"
-                    matched_ids = VEHICLE_MANAGER.get_valid_ids(text)
+                    # DATABASE LOOKUP: "What does this alert mean?" — guard with keywords to avoid false positives
+                    lower_text = text.lower()
+                    has_prisoner_kw = any(k in lower_text for k in ["prisoner", "prisonnier", "gefangene", "arrest", "cell", "jail", "transport prisoner"])
+                    has_patient_kw = any(k in lower_text for k in ["patient", "transport", "ambulance", "hospital", "verwundet", "patient"])
+                    matched_ids = VEHICLE_MANAGER.get_valid_ids(text) if (has_prisoner_kw or has_patient_kw) else []
                     is_transport_alert = False
                     
-                    # Check Capabilities of matched IDs
+                    # Check Capabilities of matched IDs only if keywords present
                     for vid in matched_ids:
                         caps = VEHICLE_MANAGER.vehicle_capabilities.get(vid, set())
-                        if "PRISONER" in caps:
+                        if has_prisoner_kw and "PRISONER" in caps:
                             await handle_prisoner_transport(page)
                             is_transport_alert = True
                             break
-                        if "PATIENT" in caps or "AMBULANCE" in caps:
+                        if has_patient_kw and ("PATIENT" in caps or "AMBULANCE" in caps):
                             # Transport is needed, but usually handled by 'Radio Transport' logic in main loop
                             # We mark it to ensure we don't try to dispatch an ambulance based on this alert
                             is_transport_alert = True
@@ -290,14 +293,19 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 # Try to still get credits via help if missing (helps sorting)
                 if credits_value == 0:
                     try:
-                        await page.click('#mission_help')
-                        await page.wait_for_selector('#iframe-inside-container', timeout=3000)
-                        _, scraped_credits = await gather_vehicle_requirements(page)
-                        credits_value = scraped_credits
-                        await page.keyboard.press('Escape')
-                        await asyncio.sleep(0.3)
+                        help_btn = await page.query_selector('#mission_help')
+                        if help_btn and await help_btn.is_visible():
+                            await help_btn.click(timeout=4000)
+                            await page.wait_for_selector('#iframe-inside-container', timeout=3000)
+                            _, scraped_credits = await gather_vehicle_requirements(page)
+                            credits_value = scraped_credits
+                            await page.keyboard.press('Escape')
+                            await asyncio.sleep(0.3)
                     except Exception:
-                        pass
+                        try:
+                            await page.keyboard.press('Escape')
+                        except Exception:
+                            pass
                 
                 mission_data[mission_id] = {
                     "mission_name": f"Missing: {mission_name}",
@@ -315,14 +323,22 @@ async def gather_mission_info(mission_entries, browser, thread_id):
             # --- 3. STANDARD REQUIREMENTS ---
             raw_requirements = []
             try:
-                await page.click('#mission_help')
-                await page.wait_for_selector('#iframe-inside-container', timeout=5000)
-                raw_requirements, scraped_credits = await gather_vehicle_requirements(page)
-                credits_value = scraped_credits
-                await page.keyboard.press('Escape')
-                await asyncio.sleep(0.5)
+                help_btn = await page.query_selector('#mission_help')
+                if help_btn and await help_btn.is_visible():
+                    await help_btn.click(timeout=4000)
+                    await page.wait_for_selector('#iframe-inside-container', timeout=5000)
+                    raw_requirements, scraped_credits = await gather_vehicle_requirements(page)
+                    credits_value = scraped_credits
+                    await page.keyboard.press('Escape')
+                    await asyncio.sleep(0.5)
+                else:
+                    display_warning(f"Help button not visible for {mission_id}, skipping requirements scrape")
             except Exception as e:
-                display_error(f"Help iframe error {mission_id}: {e}")
+                display_warning(f"Help iframe error {mission_id}: {e}")
+                try:
+                    await page.keyboard.press('Escape')
+                except Exception:
+                    pass
 
             # --- 4. CALCULATE REMAINING NEEDS ---
             vehicles_on_scene = await get_on_scene_vehicles(page)
@@ -475,15 +491,37 @@ async def gather_vehicle_requirements(page):
 
 async def handle_prisoner_transport(page):
     try:
-        closest_btn = await page.query_selector('a.btn-success, a.btn-warning')
-        if closest_btn:
-            txt = await closest_btn.inner_text()
-            # Ensure it's not a dispatch button
-            if "Dispatch" not in txt and "Alarm" not in txt:
-                await closest_btn.click()
-                await page.wait_for_load_state('networkidle')
+        # Only consider visible, enabled buttons near prisoner alerts
+        candidates = await page.query_selector_all('a.btn-success, a.btn-warning')
+        for closest_btn in candidates:
+            try:
+                if not await closest_btn.is_visible():
+                    continue
+                dis = await closest_btn.get_attribute("disabled")
+                if dis is not None:
+                    continue
+                if hasattr(closest_btn, "is_disabled") and await closest_btn.is_disabled():
+                    continue
+                txt = await closest_btn.inner_text()
+                # Ensure it's not a dispatch button and looks like transport
+                if "Dispatch" in txt or "Alarm" in txt:
+                    continue
+                # Heuristic: must contain prisoner/cell/transport keywords or be small button
+                lower = txt.lower()
+                if not any(k in lower for k in ["transport", "prisoner", "cell", "jail", "gefangene", "cel", "prison"]):
+                    # fallback: check button class proximity to prisoner alert context — skip generic success buttons
+                    # Only click if candidate count is 1 and not dispatch-related (conservative)
+                    if len(candidates) > 1:
+                        continue
+                await closest_btn.click(timeout=3000)
+                try:
+                    await page.wait_for_load_state('networkidle', timeout=5000)
+                except Exception:
+                    await page.wait_for_timeout(500)
                 return True
+            except Exception:
+                continue
         return False
     except Exception as e:
-        display_error(f"Prisoner transport error: {e}")
+        display_warning(f"Prisoner transport skipped: {e}")
         return False
