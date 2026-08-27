@@ -881,3 +881,31 @@ async def api_logs_fixes(hours: int = 24, tail: int = 100):
         return JSONResponse({"fixes": fixes, "count": len(fixes), "by_action": counts, "hours": hours})
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/training")
+async def api_training():
+    try:
+        base = PROJECT_ROOT / "data"
+        def _load(p: Path):
+            try:
+                return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+            except Exception:
+                return {}
+        return JSONResponse({
+            "training": _load(base / "training.json"),
+            "equipment": _load(base / "equipment_capacity.json"),
+            "multirole": _load(base / "multi_role.json"),
+            "automation": _load(base / "automation.json"),
+            "trailers": _load(base / "trailers.json"),
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/equipment")
+async def api_equipment():
+    try:
+        p = PROJECT_ROOT / "data" / "equipment_capacity.json"
+        data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        return JSONResponse(data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

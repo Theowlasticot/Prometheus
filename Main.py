@@ -6,10 +6,10 @@ import time  # Added import
 from playwright.async_api import async_playwright
 from setup.login import login_single
 from data.config_settings import get_username, get_password, get_threads, get_headless, get_mission_delay, \
-    get_transport_delay, get_hiring_check_interval  # Added get_hiring_check_interval
+    get_transport_delay, get_hiring_check_interval, get_server_code, get_server_auto_update, get_server_refresh_interval, get_server_cache_dir, get_manifest_url, get_server_manifest_url
 from utils.dispatcher import navigate_and_dispatch
 from utils.mission_data import check_and_grab_missions
-from utils.pretty_print import display_info, display_error, display_message
+from utils.pretty_print import display_info, display_error, display_warning, display_message
 from utils.transport import handle_transport_requests
 from utils.vehicle_data import gather_vehicle_data
 from utils.personnel_manager import manage_personnel
@@ -37,6 +37,13 @@ async def mission_logic(browsers_for_missions):
     # --- PHASE 1: Tracking Variables ---
     last_personnel_check = 0
     personnel_interval = get_hiring_check_interval() # e.g. 3600 seconds
+    last_remote_sync = 0
+    try:
+        remote_interval = get_server_refresh_interval()
+        remote_auto = get_server_auto_update()
+    except Exception:
+        remote_interval = 3600
+        remote_auto = True
     project_root = os.path.dirname(os.path.abspath(__file__))
     
     while True:
@@ -68,6 +75,37 @@ async def mission_logic(browsers_for_missions):
                     await gather_building_data(browsers_for_missions, len(browsers_for_missions))
                 except Exception as e:
                     display_error(f"Building data refresh failed: {e}")
+
+            # --- Remote .mscv Sync (keep GitHub source live) ---
+            if remote_auto:
+                try:
+                    # Re-read interval in case dashboard changed it
+                    remote_interval = get_server_refresh_interval()
+                    if current_time - last_remote_sync > remote_interval:
+                        display_info(f"Checking remote .mscv updates for {get_server_code()} (interval {remote_interval}s)...")
+                        try:
+                            from utils.remote_vehicle_store import sync_code, check_remote_changes
+                            # Quick check via etag first
+                            chk = await asyncio.to_thread(check_remote_changes, get_manifest_url(), get_server_cache_dir())
+                            if chk.get("needs_update"):
+                                display_info(f"Remote manifest changed, syncing {get_server_code()}...")
+                                res = await asyncio.to_thread(sync_code, get_server_code(), get_server_cache_dir(), get_manifest_url(), get_server_manifest_url())
+                                display_info(f"Remote sync: {res.get('message', str(res))}")
+                                # Reload VehicleManager after sync
+                                try:
+                                    from utils.dispatcher import reload_vehicle_manager as r1
+                                    from utils.mission_data import reload_vehicle_manager as r2
+                                    r1()
+                                    r2()
+                                except Exception:
+                                    pass
+                            else:
+                                display_info("Remote .mscv up-to-date (304)")
+                        except Exception as e:
+                            display_warning(f"Remote sync check failed: {e}")
+                        last_remote_sync = time.time()
+                except Exception as e:
+                    display_warning(f"Remote sync scheduling error: {e}")
             
             # --- Standard Mission Loop ---
             # Grab missions
