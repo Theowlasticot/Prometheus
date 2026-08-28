@@ -106,6 +106,17 @@ async def split_mission_ids_among_threads(mission_list, browsers, num_threads):
 
 async def get_on_scene_vehicles(page):
     on_scene_counts = {}
+    # Race guard: mission vehicle tables are rendered via AJAX — wait for at least
+    # one table before counting, otherwise we would count 0 and over-dispatch.
+    try:
+        await page.wait_for_selector(
+            '#mission_vehicle_at_mission, #mission_vehicle_driving, '
+            '#mission_vehicle_staging, #mission_vehicle_on_the_way',
+            timeout=4000
+        )
+    except Exception:
+        pass
+    await page.wait_for_timeout(500)  # let remaining AJAX rows fill
     selectors = [
         '#mission_vehicle_at_mission tr td a[vehicle_type_id]',
         '#mission_vehicle_driving tr td a[vehicle_type_id]',
@@ -245,37 +256,11 @@ async def gather_mission_info(mission_entries, browser, thread_id):
             try:
                 missing_vehicles_div = await page.query_selector('div[data-requirement-type="vehicles"]')
                 if missing_vehicles_div:
-                    text = (await missing_vehicles_div.inner_text()).strip().lower()
-                    # i18n: handle "Missing vehicles:", "Fehlende Fahrzeuge:", "Véhicules manquants:" etc — strip up to colon
-                    if ":" in text:
-                        text = text.split(":", 1)[-1]
-                    text = text.replace('\xa0', ' ').strip()
-                    
-                    vehicle_entries = text.split(',')
-                    for entry in vehicle_entries:
-                        try:
-                            match = re.search(r'(\d+)\s+(.+)', entry.strip())
-                            if not match:
-                                continue
-                            count = int(match.group(1))
-                            name = match.group(2).strip().lower()
-                            if name.endswith('s') and not name.endswith('ems') and not name.endswith('ss'): name = name[:-1]
-                                
-                            # Filter Resources — i18n
-                            if any(w in name for w in ["water", "wasser", "eau", "liters", "gallons"]) and not any(x in name for x in ["tanker", "rescue", "trailer", "boat", "wassertank", "tank"]):
-                                water_needed = max(water_needed, count)
-                                continue
-                            if any(w in name for w in ["foam", "mousse", "schaum", "schuim"]) and not any(x in name for x in ["tender", "trailer", "anhaenger", "anhänger"]):
-                                foam_needed = max(foam_needed, count)
-                                continue
-
-                            if name == "car to tow":
-                                crashed_cars = count
-                            else:
-                                vehicles.append({"name": name, "count": count})
-                        except (ValueError, AttributeError) as e:
-                            display_error(f"Vehicle entry parse error: {e}")
-                            continue
+                    text = (await missing_vehicles_div.inner_text()).strip()
+                    vehicles, water_from_red, foam_from_red, crashed_from_red = parse_missing_vehicles(text)
+                    water_needed = max(water_needed, water_from_red)
+                    foam_needed = max(foam_needed, foam_from_red)
+                    crashed_cars = max(crashed_cars, crashed_from_red)
                     found_missing_info = True
             except Exception as e:
                 display_error(f"Missing vehicles parse error {mission_id}: {e}")
@@ -410,6 +395,45 @@ def remove_plural_suffix(vehicle_name):
     if parts and parts[-1].endswith('s') and not parts[-1].lower().endswith('ss') and not parts[-1].lower() == 'gas':
         parts[-1] = parts[-1][:-1]
     return ' '.join(parts)
+
+def parse_missing_vehicles(text):
+    """Parse the red 'Missing Vehicles' window text into (vehicles, water, foam, crashed).
+
+    Shared between mission scraping and dispatch-time re-read so both use the
+    exact same rules (fenêtre rouge = source de vérité).
+    """
+    vehicles = []
+    water_needed = 0
+    foam_needed = 0
+    crashed_cars = 0
+    if not text:
+        return vehicles, water_needed, foam_needed, crashed_cars
+    if ":" in text:
+        text = text.split(":", 1)[-1]
+    text = text.replace('\xa0', ' ').strip()
+
+    for entry in text.split(','):
+        match = re.search(r'(\d+)\s+(.+)', entry.strip())
+        if not match:
+            continue
+        count = int(match.group(1))
+        name = match.group(2).strip().lower()
+        if name.endswith('s') and not name.endswith('ems') and not name.endswith('ss'):
+            name = name[:-1]
+
+        # Resources — i18n (water/eau/wasser, foam/mousse/schaum) — kept as quantities, not vehicles
+        if any(w in name for w in ["water", "wasser", "eau", "liters", "gallons"]) and not any(x in name for x in ["tanker", "rescue", "trailer", "boat", "wassertank", "tank"]):
+            water_needed = max(water_needed, count)
+            continue
+        if any(w in name for w in ["foam", "mousse", "schaum", "schuim"]) and not any(x in name for x in ["tender", "trailer", "anhaenger", "anhänger"]):
+            foam_needed = max(foam_needed, count)
+            continue
+
+        if name == "car to tow":
+            crashed_cars = count
+        else:
+            vehicles.append({"name": name, "count": count})
+    return vehicles, water_needed, foam_needed, crashed_cars
 
 async def gather_vehicle_requirements(page):
     vehicle_requirements = []

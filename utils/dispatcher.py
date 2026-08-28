@@ -7,6 +7,7 @@ from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import VehicleManager, get_manager_for_code
 from data.config_settings import get_share_alliance, get_process_alliance, get_server_code, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits
 from utils.humanize import jitter, human_sleep, random_mouse_jitter, human_click
+from utils.mission_data import parse_missing_vehicles
 import random
 
 # Trailer types that require towing vehicle (cannot dispatch alone)
@@ -219,6 +220,39 @@ async def navigate_and_dispatch(browsers):
             display_error(f"Mission {mission_id} failed to load: {e}")
             await human_sleep(0.9, 0.4)
             continue
+
+        # --- LIVE RED WINDOW RE-READ (fenêtre rouge = source de vérité) ---
+        # The file snapshot may be stale (vehicles arrived since scrape). Re-read
+        # the red window on the page right now and use it authoritatively.
+        try:
+            red = await page.query_selector('div[data-requirement-type="vehicles"]')
+            if red:
+                red_text = (await red.inner_text()).strip()
+                red_vehicles, red_water, red_foam, red_crashed = parse_missing_vehicles(red_text)
+                # Ambulance requests from the window feed the patients logic
+                amb_count = 0
+                other_reqs = []
+                for r in red_vehicles:
+                    if "ambulance" in r["name"].lower():
+                        amb_count += r["count"]
+                    else:
+                        other_reqs.append(r)
+                if amb_count:
+                    patients_count = max(patients_count, amb_count)
+                data = dict(data)
+                data["vehicles"] = other_reqs
+                data["water_needed"] = max(req_water, red_water)
+                data["foam_needed"] = max(req_foam, red_foam)
+                data["crashed_cars"] = max(crashed_cars, red_crashed)
+                is_missing_mission = True
+                display_info(f"🔴 Red window live for {mission_id}: {other_reqs} | water={data['water_needed']} foam={data['foam_needed']} amb={amb_count}")
+        except Exception as e:
+            display_warning(f"Red window re-read failed {mission_id}: {e}")
+
+        # Re-bind locals from (possibly) re-read data so resources/selection use live values
+        req_water = data.get("water_needed", 0)
+        req_foam = data.get("foam_needed", 0)
+        crashed_cars = data.get("crashed_cars", 0)
 
         if is_missing_mission or is_alliance_mission:
             is_doable = True
@@ -546,6 +580,14 @@ async def navigate_and_dispatch(browsers):
                     display_warning(f"Trailer(s) {trailer_used} may lack towing vehicle ({tow_found}/{len(trailer_used)})")
         except Exception as e:
             display_warning(f"Trailer check error: {e}")
+
+        # --- SELECTION SUMMARY (safety cap audit: never exceed red-window counts) ---
+        red_req_total = sum(r.get("count", 0) for r in vehicle_requirements)
+        display_info(
+            f"📋 Selection {mission_id}: {len(used_vehicle_ids)} selected | "
+            f"red-window reqs {red_req_total} | patients {patients_count} | "
+            f"water {req_water} foam {req_foam}"
+        )
 
         # --- SEND ---
         # Try AAR API first if enabled (faster, avoids checkbox flakiness), else click button
