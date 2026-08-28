@@ -30,6 +30,52 @@ def free_up_vehicles(mission_id: str):
 def free_all_vehicles():
     _LOCKED_VEHICLES.clear()
 
+async def read_water_status(page):
+    """Read the game's live water bars (at mission / driving / selected) -> (total, need).
+
+    The game itself tracks water already committed (on scene + approaching +
+    selected in the dispatch window). We must count from there, not from 0,
+    otherwise we over-send tankers (verified live: 'Fire in a cell' had
+    6,000 on scene + 16,187 approaching for a 8,000 need -> bot sent more).
+    """
+    total = 0
+    need = 0
+    try:
+        for cls in ("mission_water_bar_at_mission_", "mission_water_bar_driving_", "mission_water_bar_selected_"):
+            el = await page.query_selector(f'div[class*="{cls}"]')
+            if el:
+                v = await el.get_attribute('data-water-has')
+                if v and v.isdigit():
+                    total += int(v)
+        need_el = await page.query_selector('div[class*="mission_water_bar_missing_"]')
+        if need_el:
+            v = await need_el.get_attribute('data-need_water')
+            if v and v.isdigit():
+                need = int(v)
+    except Exception:
+        pass
+    return total, need
+
+async def read_foam_status(page):
+    """Same as water but for foam bars."""
+    total = 0
+    need = 0
+    try:
+        for cls in ("mission_foam_bar_at_mission_", "mission_foam_bar_driving_", "mission_foam_bar_selected_"):
+            el = await page.query_selector(f'div[class*="{cls}"]')
+            if el:
+                v = await el.get_attribute('data-foam-has')
+                if v and v.isdigit():
+                    total += int(v)
+        need_el = await page.query_selector('div[class*="mission_foam_bar_missing_"]')
+        if need_el:
+            v = await need_el.get_attribute('data-need_foam')
+            if v and v.isdigit():
+                need = int(v)
+    except Exception:
+        pass
+    return total, need
+
 async def get_vehicle_distances(page, vehicle_ids: list[str]) -> dict[str, float]:
     """Batch JS like NatesHonor vehicles.py:8 — single evaluate vs loop."""
     if not vehicle_ids:
@@ -476,6 +522,25 @@ async def navigate_and_dispatch(browsers):
                     ambulances_sent += 1
 
         # --- RESOURCES (Capability Optimized) ---
+        # Seed our tally from the game's live bars: the game already counts
+        # on-scene + approaching + selected water/foam. Without this we would
+        # re-send tankers/foam units that the game already considers covered.
+        try:
+            game_water, game_water_need = await read_water_status(page)
+            game_foam, game_foam_need = await read_foam_status(page)
+            if game_water > 0:
+                current_water = max(current_water, game_water)
+                if game_water_need > 0:
+                    req_water = max(req_water, game_water_need)
+                display_info(f"💧 Live water for {mission_id}: {game_water}/{req_water} gal (game bars)")
+            if game_foam > 0:
+                current_foam = max(current_foam, game_foam)
+                if game_foam_need > 0:
+                    req_foam = max(req_foam, game_foam_need)
+                display_info(f"🫧 Live foam for {mission_id}: {game_foam}/{req_foam} (game bars)")
+        except Exception as e:
+            display_warning(f"Live water/foam read failed {mission_id}: {e}")
+
         if req_water > current_water or req_foam > current_foam:
             potential_foam_ids = VEHICLE_MANAGER.get_ids_with_capability("FOAM")
             potential_water_ids = VEHICLE_MANAGER.get_ids_with_capability("WATER")
