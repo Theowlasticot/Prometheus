@@ -1,6 +1,7 @@
 import json
 import asyncio
 import os
+import re
 from pathlib import Path
 
 from utils.pretty_print import display_info, display_error, display_warning
@@ -75,6 +76,39 @@ async def read_foam_status(page):
     except Exception:
         pass
     return total, need
+
+async def count_patients_needing_ambulance(page):
+    """Count patients lacking an ambulance via live 'We need: Ambulance' alerts.
+
+    Returns (need, total_patients). When no such alert exists, every visible
+    patient already has an ambulance assigned -> 0 extra needed (hospital
+    transport is handled separately by the transport logic).
+    """
+    need = 0
+    total_patients = 0
+    try:
+        total_patients = len(await page.query_selector_all('div.mission_patient'))
+        texts = []
+        alerts = await page.query_selector_all('div.alert')
+        for a in alerts:
+            try:
+                t = (await a.inner_text()).strip().lower()
+            except Exception:
+                continue
+            if "ambulance" in t:
+                texts.append(t)
+        combined = 0
+        individual = 0
+        for t in texts:
+            m = re.search(r'^(\d+)x\s+we need:\s*ambulance', t)
+            if m:
+                combined = max(combined, int(m.group(1)))
+            elif "we need" in t or "brauchen" in t or "besoin" in t or "nodig" in t:
+                individual += 1
+        need = combined if combined > 0 else individual
+    except Exception:
+        pass
+    return need, total_patients
 
 async def get_vehicle_distances(page, vehicle_ids: list[str]) -> dict[str, float]:
     """Batch JS like NatesHonor vehicles.py:8 — single evaluate vs loop."""
@@ -322,9 +356,13 @@ async def navigate_and_dispatch(browsers):
                             final_needed.append({"name": req_name, "count": needed})
                     data = dict(data)
                     data["vehicles"] = final_needed
-                    live_patients = len(await page.query_selector_all('div.mission_patient'))
+                    # Precise live ambulance need: only patients WITHOUT an
+                    # assigned ambulance (game shows 'We need: Ambulance' per
+                    # uncovered patient; assigned ones show missing_text null).
+                    amb_needed_live, live_patients = await count_patients_needing_ambulance(page)
                     if live_patients > 0:
-                        patients_count = max(patients_count, live_patients)
+                        patients_count = amb_needed_live
+                        display_info(f"🚑 Live patients for {mission_id}: {live_patients} total, {amb_needed_live} need ambulance")
                     display_info(f"📐 Live standard for {mission_id}: needed {final_needed} | water={req_water} foam={req_foam} | patients={patients_count} (on-scene {len(on_scene)})")
                     if not final_needed and req_water == 0 and req_foam == 0 and patients_count == 0 and crashed_cars == 0:
                         display_info(f"✅ {mission_id} fully satisfied live — skipping")
