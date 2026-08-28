@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from utils.pretty_print import display_info, display_error
 from data.config_settings import get_server_url
-from utils.humanize import jitter, human_sleep, random_mouse_jitter
+from utils.humanize import human_sleep, random_mouse_jitter
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 

@@ -788,7 +788,6 @@ async def api_bot_stop():
 async def api_logs(level: str = None, action: str = None, fix_needed: bool = None, mission_id: str = None, tail: int = 200, search: str = None):
     """Query structured logs from logs/actions.jsonl with filters. Also includes bot logs tail if needed."""
     try:
-        from pathlib import Path as _P
         actions_path = PROJECT_ROOT / "logs" / "actions.jsonl"
         prom_path = PROJECT_ROOT / "logs" / "prometheus.log"
         results = []
@@ -838,7 +837,7 @@ async def api_logs(level: str = None, action: str = None, fix_needed: bool = Non
 async def api_logs_fixes(hours: int = 24, tail: int = 100):
     """Aggregated fixes needed in last N hours."""
     try:
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime
         cutoff = time.time() - hours*3600
         actions_path = PROJECT_ROOT / "logs" / "actions.jsonl"
         fixes = []

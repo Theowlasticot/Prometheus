@@ -1,13 +1,12 @@
 import json
 import asyncio
-import os
 import re
 from pathlib import Path
 
 from utils.pretty_print import display_info, display_error, display_warning
-from utils.vehicle_manager import VehicleManager, get_manager_for_code
-from data.config_settings import get_share_alliance, get_process_alliance, get_server_code, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits
-from utils.humanize import jitter, human_sleep, random_mouse_jitter, human_click
+from utils.vehicle_manager import get_manager_for_code
+from data.config_settings import get_share_alliance, get_process_alliance, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits
+from utils.humanize import human_sleep, random_mouse_jitter
 from utils.mission_data import parse_missing_vehicles, get_on_scene_vehicles
 from utils.building_data import load_building_data, has_expansion
 import random

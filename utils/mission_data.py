@@ -5,9 +5,9 @@ import re
 from pathlib import Path
 
 from utils.pretty_print import display_info, display_error, display_warning
-from utils.vehicle_manager import VehicleManager, get_manager_for_code
-from data.config_settings import get_server_url, is_alliance_mission_name
-from utils.humanize import jitter, human_sleep, random_mouse_jitter
+from utils.vehicle_manager import get_manager_for_code
+from data.config_settings import get_server_url
+from utils.humanize import human_sleep, random_mouse_jitter
 import random
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent

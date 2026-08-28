@@ -3,7 +3,7 @@ import random
 
 from utils.pretty_print import display_info, display_error
 from data.config_settings import get_server_url
-from utils.humanize import STEALTH_SCRIPT, random_viewport, random_user_agent, human_type, human_click, jitter
+from utils.humanize import STEALTH_SCRIPT, random_viewport, random_user_agent, jitter
 
 async def login_single(username, password, headless, thread_id, delay, playwright):
     display_info(f"Starting login for browser: {thread_id}")

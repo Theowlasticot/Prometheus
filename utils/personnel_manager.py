@@ -3,7 +3,7 @@ import random
 import re
 from utils.pretty_print import display_info, display_error, display_warning
 from data.config_settings import get_hiring_mode, get_server_url
-from utils.humanize import jitter, human_sleep, random_mouse_jitter, human_click
+from utils.humanize import human_sleep, random_mouse_jitter, human_click
 
 async def manage_personnel(browser):
     hiring_mode = get_hiring_mode()

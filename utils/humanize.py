@@ -1,7 +1,6 @@
 """Humanization helpers to avoid anti-bot detection."""
 import asyncio
 import random
-import time
 
 # Random jitter helpers
 def jitter(base: float, spread: float = 0.4) -> float:
