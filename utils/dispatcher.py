@@ -343,16 +343,28 @@ async def navigate_and_dispatch(browsers):
             try:
                 req_total = data.get("required_total") or {}
                 if req_total:
-                    on_scene = await get_on_scene_vehicles(page, wait_tables=False)
+                    # Wait briefly for the vehicle tables (AJAX). Fresh missions
+                    # have NO tables at all (they only render once a vehicle is
+                    # assigned) — that is normal, not an error.
+                    on_scene = await get_on_scene_vehicles(page, wait_tables=True, wait_timeout=2500)
+                    tables_present = await page.query_selector(
+                        '#mission_vehicle_at_mission, #mission_vehicle_driving, '
+                        '#mission_vehicle_staging, #mission_vehicle_on_the_way'
+                    )
                     final_needed = []
-                    for req_name, req_count in req_total.items():
-                        if "ambulance" in req_name.lower():
-                            continue
-                        req_ids = VEHICLE_MANAGER.get_valid_ids(req_name)
-                        count_on = sum(c for t, c in on_scene.items() if t in req_ids)
-                        needed = max(0, req_count - count_on)
-                        if needed > 0:
-                            final_needed.append({"name": req_name, "count": needed})
+                    if tables_present:
+                        for req_name, req_count in req_total.items():
+                            if "ambulance" in req_name.lower():
+                                continue
+                            req_ids = VEHICLE_MANAGER.get_valid_ids(req_name)
+                            count_on = sum(c for t, c in on_scene.items() if t in req_ids)
+                            needed = max(0, req_count - count_on)
+                            if needed > 0:
+                                final_needed.append({"name": req_name, "count": needed})
+                    else:
+                        # Fresh mission — fall back to the scrape-time needed list
+                        # (scrape had its own AJAX waits; red window re-checked above).
+                        final_needed = [r for r in data.get("vehicles", []) if "ambulance" not in r.get("name", "").lower()]
                     data = dict(data)
                     data["vehicles"] = final_needed
                     # Precise live ambulance need: only patients WITHOUT an
@@ -581,25 +593,25 @@ async def navigate_and_dispatch(browsers):
         if req_water > current_water or req_foam > current_foam:
             potential_foam_ids = VEHICLE_MANAGER.get_ids_with_capability("FOAM")
             potential_water_ids = VEHICLE_MANAGER.get_ids_with_capability("WATER")
-            
+
+            # Collect resource candidates, then pick the HIGHEST capacity first:
+            # e.g. 1 Foam Tender (2500f) instead of 7 Quints (25f each) for 175 foam.
+            resource_candidates = []
             remaining = await page.query_selector_all('input.vehicle_checkbox:not(:checked)')
             for cb in remaining:
-                if current_water >= req_water and current_foam >= req_foam: break
                 vid = await cb.get_attribute("value")
-                if vid in used_vehicle_ids: continue
-                
+                if vid in used_vehicle_ids:
+                    continue
                 sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
-                if not sys_id: continue 
-                
-                # Check Capabilities in DB first to save time
+                if not sys_id:
+                    continue
                 needs_check = False
                 if req_foam > current_foam and sys_id in potential_foam_ids:
                     needs_check = True
                 if req_water > current_water and sys_id in potential_water_ids:
                     needs_check = True
-                    
-                if not needs_check: continue
-                
+                if not needs_check:
+                    continue
                 w_raw = await cb.get_attribute("water_amount") or await cb.get_attribute("wasser_amount") or "0"
                 f_raw = await cb.get_attribute("foam_amount") or await cb.get_attribute("foam_amount_display") or "0"
                 try:
@@ -610,7 +622,23 @@ async def navigate_and_dispatch(browsers):
                     f = int(str(f_raw).replace(',', '').strip() or 0)
                 except ValueError:
                     f = 0
-                
+                if w <= 0 and f <= 0:
+                    continue
+                resource_candidates.append((cb, vid, w, f))
+            # Sort by the deficient resource capacity desc
+            def _res_key(item):
+                cb, vid, w, f = item
+                score = 0
+                if req_water > current_water:
+                    score += w
+                if req_foam > current_foam:
+                    score += f * 5  # prefer foam carriers when foam is the shortage
+                return score
+            resource_candidates.sort(key=_res_key, reverse=True)
+
+            for cb, vid, w, f in resource_candidates:
+                if current_water >= req_water and current_foam >= req_foam:
+                    break
                 useful = False
                 if req_water > current_water and w > 0:
                     current_water += w
@@ -618,7 +646,6 @@ async def navigate_and_dispatch(browsers):
                 if req_foam > current_foam and f > 0:
                     current_foam += f
                     useful = True
-                
                 if useful:
                     await click_vehicle(page, cb)
                     used_vehicle_ids.append(vid)

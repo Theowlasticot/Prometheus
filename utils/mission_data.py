@@ -133,7 +133,7 @@ async def split_mission_ids_among_threads(mission_list, browsers, num_threads):
             mission_data[mission_id] = data
     return mission_data
 
-async def get_on_scene_vehicles(page, wait_tables=True):
+async def get_on_scene_vehicles(page, wait_tables=True, wait_timeout=4000):
     on_scene_counts = {}
     if wait_tables:
         # Race guard: mission vehicle tables are rendered via AJAX — wait for at least
@@ -142,7 +142,7 @@ async def get_on_scene_vehicles(page, wait_tables=True):
             await page.wait_for_selector(
                 '#mission_vehicle_at_mission, #mission_vehicle_driving, '
                 '#mission_vehicle_staging, #mission_vehicle_on_the_way',
-                timeout=4000
+                timeout=wait_timeout
             )
         except Exception:
             pass
