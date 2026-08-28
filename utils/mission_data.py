@@ -29,6 +29,24 @@ NON_VEHICLE_KEYWORDS = [
     'probability', 'patient', '%', 'min', 'max'
 ]
 
+# Radio messages that signal a new need (escalation / reinforcements) after dispatch
+RADIO_ESCALATION_KEYWORDS = [
+    "we need", "needs", "needed", "benötigt", "manque", "fehlt",
+    "renfort", "missing", "verstärkung", "requested", "demandé",
+]
+
+async def check_radio_escalation(page):
+    """Return True if the radio log contains escalation/needs messages."""
+    try:
+        items = await page.query_selector_all('#radio_messages_important li, #radio_messages li')
+        for it in items:
+            txt = (await it.inner_text()).strip().lower()
+            if any(k in txt for k in RADIO_ESCALATION_KEYWORDS):
+                return True
+    except Exception:
+        pass
+    return False
+
 async def check_and_grab_missions(browsers, num_threads):
     first_browser = browsers[0]
     try:
@@ -48,6 +66,7 @@ async def check_and_grab_missions(browsers, num_threads):
         # Deduplicate by id
         seen = set()
         mission_list = []
+        green_skipped = 0
         for panel in mission_panels:
             try:
                 m_id_attr = await panel.get_attribute('id')
@@ -60,11 +79,21 @@ async def check_and_grab_missions(browsers, num_threads):
                 if not clean_id.isdigit() or clean_id in seen:
                     continue
                 seen.add(clean_id)
+                # Skip fully-satisfied missions (green panel = nothing missing, no escalation)
+                # Escalations turn them red again -> next loop catches them.
+                inner_green = await panel.query_selector('.mission_panel_green')
+                inner_red = await panel.query_selector('.mission_panel_red')
+                inner_yellow = await panel.query_selector('.mission_panel_yellow')
+                if inner_green and not inner_red and not inner_yellow:
+                    green_skipped += 1
+                    continue
                 m_type_id = await panel.get_attribute('mission_type_id')
                 mission_list.append({'id': clean_id, 'type': m_type_id})
             except (AttributeError, ValueError) as e:
                 display_error(f"Panel parse error: {e}")
                 continue
+        if green_skipped:
+            display_info(f"Skipped {green_skipped} fully-satisfied (green) missions.")
         # Fallback: also check for alliance panels specifically if none found
         if not mission_list:
             try:
@@ -104,19 +133,20 @@ async def split_mission_ids_among_threads(mission_list, browsers, num_threads):
             mission_data[mission_id] = data
     return mission_data
 
-async def get_on_scene_vehicles(page):
+async def get_on_scene_vehicles(page, wait_tables=True):
     on_scene_counts = {}
-    # Race guard: mission vehicle tables are rendered via AJAX — wait for at least
-    # one table before counting, otherwise we would count 0 and over-dispatch.
-    try:
-        await page.wait_for_selector(
-            '#mission_vehicle_at_mission, #mission_vehicle_driving, '
-            '#mission_vehicle_staging, #mission_vehicle_on_the_way',
-            timeout=4000
-        )
-    except Exception:
-        pass
-    await page.wait_for_timeout(500)  # let remaining AJAX rows fill
+    if wait_tables:
+        # Race guard: mission vehicle tables are rendered via AJAX — wait for at least
+        # one table before counting, otherwise we would count 0 and over-dispatch.
+        try:
+            await page.wait_for_selector(
+                '#mission_vehicle_at_mission, #mission_vehicle_driving, '
+                '#mission_vehicle_staging, #mission_vehicle_on_the_way',
+                timeout=4000
+            )
+        except Exception:
+            pass
+        await page.wait_for_timeout(500)  # let remaining AJAX rows fill
     selectors = [
         '#mission_vehicle_at_mission tr td a[vehicle_type_id]',
         '#mission_vehicle_driving tr td a[vehicle_type_id]',
@@ -308,7 +338,8 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                     "water_needed": water_needed,
                     "foam_needed": foam_needed,
                     "required_personnel": required_personnel,
-                    "required_expansions": required_expansions
+                    "required_expansions": required_expansions,
+                    "required_total": {}
                 }
                 continue
 
@@ -380,7 +411,8 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 "water_needed": water_needed,
                 "foam_needed": foam_needed,
                 "required_personnel": required_personnel,
-                "required_expansions": required_expansions
+                "required_expansions": required_expansions,
+                "required_total": {req["name"]: req["count"] for req in raw_requirements}
             }
         except asyncio.CancelledError:
             raise

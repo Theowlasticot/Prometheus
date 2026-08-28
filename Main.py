@@ -6,9 +6,9 @@ import time  # Added import
 from playwright.async_api import async_playwright
 from setup.login import login_single
 from data.config_settings import get_username, get_password, get_threads, get_headless, get_mission_delay, \
-    get_transport_delay, get_hiring_check_interval, get_server_code, get_server_auto_update, get_server_refresh_interval, get_server_cache_dir, get_manifest_url, get_server_manifest_url
+    get_transport_delay, get_hiring_check_interval, get_server_code, get_server_auto_update, get_server_refresh_interval, get_server_cache_dir, get_manifest_url, get_server_manifest_url, get_server_url
 from utils.dispatcher import navigate_and_dispatch
-from utils.mission_data import check_and_grab_missions
+from utils.mission_data import check_and_grab_missions, check_radio_escalation
 from utils.pretty_print import display_info, display_error, display_warning, display_message
 from utils.transport import handle_transport_requests
 from utils.vehicle_data import gather_vehicle_data
@@ -159,7 +159,26 @@ async def mission_logic(browsers_for_missions):
                 human_mission += extra
                 display_info(f"Human pause: +{extra:.0f}s")
             display_info(f"Waiting {human_mission:.1f}s before checking missions again.")
-            await asyncio.sleep(human_mission)
+            # Escalation-aware wait: poll the radio log periodically; if a new
+            # need is announced (On-Scene escalation, reinforcements), re-grab early.
+            waited = 0.0
+            poll_interval = 25.0
+            while waited < human_mission:
+                chunk = min(poll_interval, human_mission - waited)
+                await asyncio.sleep(chunk)
+                waited += chunk
+                if waited >= human_mission:
+                    break
+                try:
+                    pg = browsers_for_missions[0].contexts[0].pages[0]
+                    await pg.goto(f"{get_server_url().rstrip('/')}/", timeout=30000)
+                    await pg.wait_for_load_state("domcontentloaded", timeout=15000)
+                    await pg.wait_for_timeout(700)
+                    if await check_radio_escalation(pg):
+                        display_info("📻 Radio escalation detected — re-grabbing missions now")
+                        break
+                except Exception:
+                    pass
             # Small extra human jitter between loops
             await human_sleep(0.6, 0.6)
             

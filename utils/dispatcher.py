@@ -7,7 +7,8 @@ from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import VehicleManager, get_manager_for_code
 from data.config_settings import get_share_alliance, get_process_alliance, get_server_code, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits
 from utils.humanize import jitter, human_sleep, random_mouse_jitter, human_click
-from utils.mission_data import parse_missing_vehicles
+from utils.mission_data import parse_missing_vehicles, get_on_scene_vehicles
+from utils.building_data import load_building_data, has_expansion
 import random
 
 # Trailer types that require towing vehicle (cannot dispatch alone)
@@ -253,6 +254,37 @@ async def navigate_and_dispatch(browsers):
         req_water = data.get("water_needed", 0)
         req_foam = data.get("foam_needed", 0)
         crashed_cars = data.get("crashed_cars", 0)
+
+        # --- LIVE STANDARD PATH (fenêtre rouge absente) ---
+        # Never open the help lightbox here: it destroys the vehicle checkbox
+        # DOM (verified live: 126 cbs -> 0 after help open/close).
+        # Instead use raw requirements stored by the scrape (same loop) and
+        # re-subtract the live on-scene counts (tables are on the page, no lightbox).
+        if not is_missing_mission and not is_alliance_mission:
+            try:
+                req_total = data.get("required_total") or {}
+                if req_total:
+                    on_scene = await get_on_scene_vehicles(page, wait_tables=False)
+                    final_needed = []
+                    for req_name, req_count in req_total.items():
+                        if "ambulance" in req_name.lower():
+                            continue
+                        req_ids = VEHICLE_MANAGER.get_valid_ids(req_name)
+                        count_on = sum(c for t, c in on_scene.items() if t in req_ids)
+                        needed = max(0, req_count - count_on)
+                        if needed > 0:
+                            final_needed.append({"name": req_name, "count": needed})
+                    data = dict(data)
+                    data["vehicles"] = final_needed
+                    live_patients = len(await page.query_selector_all('div.mission_patient'))
+                    if live_patients > 0:
+                        patients_count = max(patients_count, live_patients)
+                    display_info(f"📐 Live standard for {mission_id}: needed {final_needed} | water={req_water} foam={req_foam} | patients={patients_count} (on-scene {len(on_scene)})")
+                    if not final_needed and req_water == 0 and req_foam == 0 and patients_count == 0 and crashed_cars == 0:
+                        display_info(f"✅ {mission_id} fully satisfied live — skipping")
+                        continue
+            except Exception as e:
+                display_warning(f"Live standard failed {mission_id}: {e} — using file data")
 
         if is_missing_mission or is_alliance_mission:
             is_doable = True
