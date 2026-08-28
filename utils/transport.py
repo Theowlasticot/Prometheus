@@ -162,6 +162,13 @@ async def handle_transport_requests(browser):
                                 continue
                             if max_dist and max_dist > 0 and distance_value > max_dist:
                                 continue
+                            # Department / required extension check — patient requires a
+                            # specific extension; hospital must show 'Yes' (label-success).
+                            # 'No' (label-warning) transports get rejected by the game.
+                            dept_yes = await hospital.query_selector('span.label-success')
+                            dept_no = await hospital.query_selector('span.label-warning')
+                            if dept_no and not dept_yes:
+                                continue
                             # Check free beds — i18n: look for td containing "/" or "free"
                             free_beds = None
                             try:
@@ -196,11 +203,14 @@ async def handle_transport_requests(browser):
                     if transport_button_to_click:
                         try:
                             await human_click(page, transport_button_to_click)
-                            try:
-                                await page.wait_for_load_state('networkidle', timeout=5000)
-                            except Exception:
-                                await human_sleep(0.5, 0.5)
-                            display_info(f"Transported to nearest hospital/cell ({smallest_distance:.1f})")
+                            await page.wait_for_load_state('domcontentloaded', timeout=10000)
+                            await human_sleep(0.4, 0.5)
+                            # Verify the game accepted the transport
+                            body_txt = (await page.inner_text('body')).lower()
+                            if any(k in body_txt for k in ["being transported", "transported to the hospital", "acknowledged"]):
+                                display_info(f"✅ Transported to nearest hospital/cell ({smallest_distance:.1f})")
+                            else:
+                                display_warning(f"Transport possibly rejected for vehicle (dist {smallest_distance:.1f})")
                         except Exception as e:
                             display_error(f"Transport click failed: {e}")
                     else:
@@ -237,11 +247,13 @@ async def handle_transport_requests(browser):
                     if transport_button_to_click:
                         try:
                             await human_click(page, transport_button_to_click)
-                            try:
-                                await page.wait_for_load_state('networkidle', timeout=5000)
-                            except Exception:
-                                await human_sleep(0.5, 0.5)
-                            display_info(f"Transported via patrol button ({smallest_distance:.1f})")
+                            await page.wait_for_load_state('domcontentloaded', timeout=10000)
+                            await human_sleep(0.4, 0.5)
+                            body_txt = (await page.inner_text('body')).lower()
+                            if any(k in body_txt for k in ["being transported", "will be transported", "transported to", "acknowledged", "gefangene", "prisoner"]):
+                                display_info(f"✅ Transported via patrol button ({smallest_distance:.1f})")
+                            else:
+                                display_warning(f"Transport possibly rejected (patrol, dist {smallest_distance:.1f})")
                         except Exception as e:
                             display_error(f"Patrol transport click failed: {e}")
                     else:
@@ -251,7 +263,7 @@ async def handle_transport_requests(browser):
                             if release_button:
                                 await human_click(page, release_button)
                                 try:
-                                    await page.wait_for_load_state('networkidle', timeout=5000)
+                                    await page.wait_for_load_state('domcontentloaded', timeout=8000)
                                 except Exception:
                                     await human_sleep(0.5, 0.5)
                                 display_info("No cells available, clicked 'Release Prisoners'")

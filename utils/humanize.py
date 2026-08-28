@@ -38,15 +38,32 @@ async def human_type(page, selector: str, text: str, delay_low=45, delay_high=14
     await asyncio.sleep(random.uniform(0.18, 0.45))
 
 async def human_click(page, locator_or_selector, timeout=8000):
-    """Move mouse like human then click with slight offset."""
+    """Move mouse like human then click with slight offset.
+
+    Scrolls the element into view first — a raw mouse.click at coordinates
+    outside the viewport silently misses the target (no error raised).
+    """
     try:
         if isinstance(locator_or_selector, str):
             loc = page.locator(locator_or_selector).first
         else:
             loc = locator_or_selector
-        # Hover with slight random offset
+        # Ensure in viewport — Playwright auto-scrolls on click, we do it for the mouse path
+        try:
+            await loc.scroll_into_view_if_needed(timeout=timeout)
+        except Exception:
+            pass
+        await asyncio.sleep(random.uniform(0.10, 0.25))
         box = await loc.bounding_box()
-        if box:
+        viewport_h = None
+        try:
+            vs = page.viewport_size
+            if vs:
+                viewport_h = vs.get("height")
+        except Exception:
+            viewport_h = None
+        # Only do the manual mouse path when the box is comfortably inside the viewport
+        if box and (viewport_h is None or (0 <= box["y"] < viewport_h - 10)):
             # Move to near center with ±8px jitter
             x = box["x"] + box["width"] / 2 + random.uniform(-8, 8)
             y = box["y"] + box["height"] / 2 + random.uniform(-4, 4)
@@ -63,6 +80,7 @@ async def human_click(page, locator_or_selector, timeout=8000):
             await asyncio.sleep(random.uniform(0.06, 0.18))
             await page.mouse.click(x, y)
         else:
+            # Off-viewport or no box -> rely on Playwright's auto-scrolling click
             await loc.click(timeout=timeout)
         # Small post-click pause
         await asyncio.sleep(random.uniform(0.12, 0.32))
