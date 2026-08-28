@@ -217,16 +217,15 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                     matched_ids = VEHICLE_MANAGER.get_valid_ids(text) if (has_prisoner_kw or has_patient_kw) else []
                     is_transport_alert = False
                     
-                    # Check Capabilities of matched IDs only if keywords present
+                    # Transport needs are handled by the dedicated transport loop
+                    # (radio -> vehicle page -> hospital/cell). Here we only mark
+                    # them so the scanner does not try to dispatch vehicles for it.
                     for vid in matched_ids:
                         caps = VEHICLE_MANAGER.vehicle_capabilities.get(vid, set())
                         if has_prisoner_kw and "PRISONER" in caps:
-                            await handle_prisoner_transport(page)
                             is_transport_alert = True
                             break
                         if has_patient_kw and ("PATIENT" in caps or "AMBULANCE" in caps):
-                            # Transport is needed, but usually handled by 'Radio Transport' logic in main loop
-                            # We mark it to ensure we don't try to dispatch an ambulance based on this alert
                             is_transport_alert = True
                             break
 
@@ -657,40 +656,3 @@ async def gather_vehicle_requirements(page):
         pass
 
     return vehicle_requirements, credits, water_needed, foam_needed, required_expansions, required_personnel
-
-async def handle_prisoner_transport(page):
-    try:
-        # Only consider visible, enabled buttons near prisoner alerts
-        candidates = await page.query_selector_all('a.btn-success, a.btn-warning')
-        for closest_btn in candidates:
-            try:
-                if not await closest_btn.is_visible():
-                    continue
-                dis = await closest_btn.get_attribute("disabled")
-                if dis is not None:
-                    continue
-                if hasattr(closest_btn, "is_disabled") and await closest_btn.is_disabled():
-                    continue
-                txt = await closest_btn.inner_text()
-                # Ensure it's not a dispatch button and looks like transport
-                if "Dispatch" in txt or "Alarm" in txt:
-                    continue
-                # Heuristic: must contain prisoner/cell/transport keywords or be small button
-                lower = txt.lower()
-                if not any(k in lower for k in ["transport", "prisoner", "cell", "jail", "gefangene", "cel", "prison"]):
-                    # fallback: check button class proximity to prisoner alert context — skip generic success buttons
-                    # Only click if candidate count is 1 and not dispatch-related (conservative)
-                    if len(candidates) > 1:
-                        continue
-                await closest_btn.click(timeout=3000)
-                try:
-                    await page.wait_for_load_state('networkidle', timeout=5000)
-                except Exception:
-                    await page.wait_for_timeout(500)
-                return True
-            except Exception:
-                continue
-        return False
-    except Exception as e:
-        display_warning(f"Prisoner transport skipped: {e}")
-        return False

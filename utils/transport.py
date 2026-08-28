@@ -4,7 +4,7 @@ import random
 
 from utils.pretty_print import display_info, display_error, display_warning
 from data.config_settings import get_server_url, get_allow_alliance_hospitals, get_allow_alliance_cells, get_max_distance
-from utils.humanize import jitter, human_sleep, random_mouse_jitter
+from utils.humanize import human_sleep, human_click, random_mouse_jitter
 
 def _parse_distance(text):
     """Parse distance from text like '5.3 km', '3.2 mi', 'Distance: 5.3 km (Free: 2)' handling commas."""
@@ -30,6 +30,16 @@ def _parse_distance(text):
         except ValueError:
             return None
 
+def _pick_nearest(candidates):
+    """candidates: list of (distance_or_None, element) -> nearest (element, distance)."""
+    best = None
+    best_d = float('inf')
+    for d, el in candidates:
+        if d is not None and d < best_d:
+            best_d = d
+            best = el
+    return best, best_d if best else float('inf')
+
 async def handle_transport_requests(browser):
     try:
         page = browser.contexts[0].pages[0]
@@ -42,7 +52,7 @@ async def handle_transport_requests(browser):
                 await page.wait_for_selector('ul#radio_messages_important, ul#radio_messages', timeout=5000)
             except Exception:
                 pass
-            await page.wait_for_timeout(800)
+            await human_sleep(0.7, 0.45)
         except Exception as e:
             display_error(f"Transport: failed to load main page: {e}")
             return
@@ -97,6 +107,9 @@ async def handle_transport_requests(browser):
                     await page.wait_for_selector('table#own-hospitals, table#alliance-hospitals, table#alliance-cells, a.btn.btn-success', timeout=4000)
                 except Exception:
                     await page.wait_for_timeout(600)
+                await human_sleep(0.35, 0.5)
+                if random.random() < 0.12:
+                    await random_mouse_jitter(page, moves=1)
             except Exception as e:
                 display_error(f"Transport: failed to load {vehicle_url}: {e}")
                 continue
@@ -137,9 +150,7 @@ async def handle_transport_requests(browser):
                             continue
                     display_info(f"Found {len(all_hospitals)} hospitals/cells (tables: {', '.join(hospitals_tables)})")
 
-                    smallest_distance = float('inf')
-                    transport_button_to_click = None
-
+                    candidates = []
                     for hospital in all_hospitals:
                         try:
                             distance_element = await hospital.query_selector('td:nth-child(2)')
@@ -176,16 +187,19 @@ async def handle_transport_requests(browser):
                                         continue
                                 except Exception:
                                     pass
-                            if distance_value < smallest_distance and transport_button:
-                                smallest_distance = distance_value
-                                transport_button_to_click = transport_button
+                            if transport_button:
+                                candidates.append((distance_value, transport_button))
                         except Exception:
                             continue
 
+                    transport_button_to_click, smallest_distance = _pick_nearest(candidates)
                     if transport_button_to_click:
                         try:
-                            await transport_button_to_click.click()
-                            await page.wait_for_load_state('networkidle')
+                            await human_click(page, transport_button_to_click)
+                            try:
+                                await page.wait_for_load_state('networkidle', timeout=5000)
+                            except Exception:
+                                await human_sleep(0.5, 0.5)
                             display_info(f"Transported to nearest hospital/cell ({smallest_distance:.1f})")
                         except Exception as e:
                             display_error(f"Transport click failed: {e}")
@@ -199,9 +213,7 @@ async def handle_transport_requests(browser):
                     patrol_buttons = await page.query_selector_all('a.btn.btn-success')
                     display_info(f"Found {len(patrol_buttons)} patrol transport buttons")
 
-                    smallest_distance = float('inf')
-                    transport_button_to_click = None
-
+                    candidates = []
                     for button in patrol_buttons:
                         try:
                             button_text = await button.inner_text()
@@ -217,16 +229,18 @@ async def handle_transport_requests(browser):
                                 continue
                             if max_dist and max_dist > 0 and distance_value > max_dist:
                                 continue
-                            if distance_value < smallest_distance:
-                                smallest_distance = distance_value
-                                transport_button_to_click = button
+                            candidates.append((distance_value, button))
                         except Exception:
                             continue
 
+                    transport_button_to_click, smallest_distance = _pick_nearest(candidates)
                     if transport_button_to_click:
                         try:
-                            await transport_button_to_click.click()
-                            await page.wait_for_load_state('networkidle')
+                            await human_click(page, transport_button_to_click)
+                            try:
+                                await page.wait_for_load_state('networkidle', timeout=5000)
+                            except Exception:
+                                await human_sleep(0.5, 0.5)
                             display_info(f"Transported via patrol button ({smallest_distance:.1f})")
                         except Exception as e:
                             display_error(f"Patrol transport click failed: {e}")
@@ -235,8 +249,11 @@ async def handle_transport_requests(browser):
                         try:
                             release_button = await page.query_selector('a.btn.btn-xs.btn-danger')
                             if release_button:
-                                await release_button.click()
-                                await page.wait_for_load_state('networkidle')
+                                await human_click(page, release_button)
+                                try:
+                                    await page.wait_for_load_state('networkidle', timeout=5000)
+                                except Exception:
+                                    await human_sleep(0.5, 0.5)
                                 display_info("No cells available, clicked 'Release Prisoners'")
                             else:
                                 display_info("No transport buttons or 'Release Prisoners' button found.")
