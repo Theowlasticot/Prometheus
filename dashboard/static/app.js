@@ -249,86 +249,132 @@ async function syncAssets() {
   setTimeout(()=> el.textContent="", 6000);
 }
 
+let CONFIG_SCHEMA = [];
+let CONFIG_GROUPS = [];
+
+function cfgId(section, key) { return `cfg-${section}-${key}`; }
+
+function toggleHTML(id) {
+  return `<input id="${id}" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-amber-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" />`;
+}
+
+async function loadConfigSchema() {
+  try {
+    const r = await fetch("/api/config/schema");
+    const j = await r.json();
+    CONFIG_SCHEMA = j.schema || [];
+    CONFIG_GROUPS = j.groups || [];
+    const cfg = j.config || {};
+    const cards = $("config-cards");
+    if (!cards) return;
+    cards.innerHTML = "";
+    const byGroup = {};
+    for (const item of CONFIG_SCHEMA) {
+      (byGroup[item.group] = byGroup[item.group] || []).push(item);
+    }
+    const accent = {
+      server: "border-amber-500/30 ring-amber-500/10",
+      browser: "border-slate-800",
+      delays: "border-slate-800",
+      personnel: "border-amber-500/20 ring-amber-500/10",
+      mission: "border-sky-500/20 ring-sky-500/10",
+      transport: "border-violet-500/20 ring-violet-500/10",
+      dispatch: "border-emerald-500/20 ring-emerald-500/10",
+      filter: "border-slate-700",
+      ingestion: "border-rose-500/20 ring-rose-500/10",
+    };
+    for (const [group, title, subtitle] of CONFIG_GROUPS) {
+      const items = byGroup[group];
+      if (!items) continue;
+      const card = document.createElement("div");
+      card.className = `rounded-2xl border bg-slate-900/60 p-5 ${accent[group] || "border-slate-800"}`;
+      let fields = "";
+      for (const item of items) {
+        const id = cfgId(item.section, item.key);
+        const raw = (cfg[item.section] || {})[item.key];
+        const val = raw === undefined || raw === null ? (item.default ?? "") : String(raw);
+        if (item.type === "bool") {
+          const checked = val.toLowerCase() === "true" ? "checked" : "";
+          fields += `
+            <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3">
+              <div><p class="text-sm font-medium">${item.label}</p><p class="text-xs text-slate-500">${item.help || ""}</p></div>
+              ${toggleHTML(id).replace(`id="${id}"`, `id="${id}" ${checked}`)}
+            </label>`;
+        } else if (item.choices) {
+          let opts = "";
+          for (const [cv, clabel] of item.choices) {
+            opts += `<option value="${cv}" ${String(val) === cv ? "selected" : ""}>${clabel}</option>`;
+          }
+          fields += `
+            <label class="flex flex-col gap-1.5">
+              <span class="text-xs font-medium text-slate-400">${item.label}</span>
+              <select id="${id}" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono">${opts}</select>
+              <span class="text-[11px] text-slate-500">${item.help || ""}</span>
+            </label>`;
+        } else {
+          const isNum = item.type === "int" || item.type === "float";
+          const minAttr = item.min !== undefined ? `min="${item.min}"` : "";
+          const maxAttr = item.max !== undefined ? `max="${item.max}"` : "";
+          fields += `
+            <label class="flex flex-col gap-1.5">
+              <span class="text-xs font-medium text-slate-400">${item.label}</span>
+              <input id="${id}" type="${isNum ? "number" : "text"}" ${minAttr} ${maxAttr} value="${val.replace(/"/g, "&quot;")}" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" />
+              <span class="text-[11px] text-slate-500">${item.help || ""}</span>
+            </label>`;
+        }
+      }
+      card.innerHTML = `
+        <h3 class="text-sm font-semibold mb-1">${title}</h3>
+        <p class="text-xs text-slate-500 mb-4">${subtitle}</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">${fields}</div>`;
+      cards.appendChild(card);
+    }
+  } catch (e) { console.error("loadConfigSchema", e); }
+}
+
 async function loadConfig() {
   try {
     const r = await fetch("/api/config");
     const cfg = await r.json();
-    $("cfg-headless").value = (cfg.browser_settings?.headless ?? "true").toString();
-    $("cfg-browsers").value = cfg.browser_settings?.browsers ?? 2;
-    $("cfg-missions").value = cfg.delays?.missions ?? 10;
-    $("cfg-transport").value = cfg.delays?.transport ?? 60;
-    $("cfg-personnel-check").value = cfg.delays?.personnel_check ?? 3600;
-    $("cfg-hiring").value = cfg.personnel_settings?.hiring_mode ?? "3";
-    $("cfg-share").checked = (cfg.mission_settings?.share_alliance ?? "true").toString().toLowerCase() === "true";
-    $("cfg-process").checked = (cfg.mission_settings?.process_alliance ?? "true").toString().toLowerCase() === "true";
-    $("cfg-username").value = cfg.credentials?.username ?? "";
-    $("cfg-password").value = ""; // redacted as *** — leave empty to keep
-    // server_settings
-    const scode = cfg.server_settings?.code ?? "us";
-    const sel = $("cfg-server-code");
-    if (sel) {
-      sel.value = scode;
+    for (const item of CONFIG_SCHEMA) {
+      const el = $(cfgId(item.section, item.key));
+      if (!el) continue;
+      const raw = (cfg[item.section] || {})[item.key];
+      const val = raw === undefined || raw === null ? (item.default ?? "") : String(raw);
+      if (item.type === "bool") {
+        el.checked = val.toLowerCase() === "true";
+      } else {
+        el.value = val;
+      }
     }
-    $("cfg-auto-update").checked = (cfg.server_settings?.auto_update ?? "true").toString().toLowerCase() === "true";
-    $("cfg-refresh-interval").value = cfg.server_settings?.refresh_interval ?? 3600;
+    $("cfg-username").value = cfg.credentials?.username ?? "";
+    $("cfg-password").value = "";
     $("cfg-cache-dir").textContent = cfg.server_settings?.cache_dir ?? "assets_cache";
-    // transport
-    $("cfg-allow-hosp").checked = (cfg.transport_settings?.allow_alliance_hospitals ?? "true").toString().toLowerCase() === "true";
-    $("cfg-allow-cells").checked = (cfg.transport_settings?.allow_alliance_cells ?? "true").toString().toLowerCase() === "true";
-    $("cfg-max-distance").value = cfg.transport_settings?.max_distance ?? 0;
-    // dispatch
-    $("cfg-min-percent").value = cfg.dispatch_settings?.min_percent ?? 70;
-    $("cfg-use-aar").checked = (cfg.dispatch_settings?.use_aar ?? "false").toString().toLowerCase() === "true";
-    // mission_filter
-    $("cfg-ignore-storm").checked = (cfg.mission_filter?.ignore_storm ?? "false").toString().toLowerCase() === "true";
-    $("cfg-ignore-event").checked = (cfg.mission_filter?.ignore_event ?? "false").toString().toLowerCase() === "true";
-    $("cfg-min-credits").value = cfg.mission_filter?.min_credits ?? 0;
     if (cfg.credentials?.password === "***") {
       $("cfg-password").placeholder = "•••••••• (set)";
     }
     $("save-status").textContent = "loaded";
-    setTimeout(()=> $("save-status").textContent="", 1200);
-  } catch(e) { toast("Failed to load config: "+e, false); }
+    setTimeout(() => $("save-status").textContent = "", 1200);
+  } catch (e) { toast("Failed to load config: " + e, false); }
 }
 
 async function saveConfig() {
-  const payload = {
-    browser_settings: {
-      headless: $("cfg-headless").value,
-      browsers: $("cfg-browsers").value
-    },
-    delays: {
-      missions: $("cfg-missions").value,
-      transport: $("cfg-transport").value,
-      personnel_check: $("cfg-personnel-check").value
-    },
-    personnel_settings: {
-      hiring_mode: $("cfg-hiring").value
-    },
-    mission_settings: {
-      share_alliance: $("cfg-share").checked ? "true" : "false",
-      process_alliance: $("cfg-process").checked ? "true" : "false"
-    },
-    server_settings: {
-      code: $("cfg-server-code").value,
-      auto_update: $("cfg-auto-update").checked ? "true" : "false",
-      refresh_interval: $("cfg-refresh-interval").value
-    },
-    transport_settings: {
-      allow_alliance_hospitals: $("cfg-allow-hosp").checked ? "true" : "false",
-      allow_alliance_cells: $("cfg-allow-cells").checked ? "true" : "false",
-      max_distance: $("cfg-max-distance").value
-    },
-    dispatch_settings: {
-      min_percent: $("cfg-min-percent").value,
-      use_aar: $("cfg-use-aar").checked ? "true" : "false"
-    },
-    mission_filter: {
-      ignore_storm: $("cfg-ignore-storm").checked ? "true" : "false",
-      ignore_event: $("cfg-ignore-event").checked ? "true" : "false",
-      min_credits: $("cfg-min-credits").value
+  const payload = {};
+  for (const item of CONFIG_SCHEMA) {
+    const el = $(cfgId(item.section, item.key));
+    if (!el) continue;
+    let v;
+    if (item.type === "bool") {
+      v = el.checked ? "true" : "false";
+    } else {
+      v = el.value;
     }
-  };
+    (payload[item.section] = payload[item.section] || {})[item.key] = v;
+  }
+  const codeEl = $("cfg-server-code");
+  if (codeEl) {
+    (payload.server_settings = payload.server_settings || {}).code = codeEl.value;
+  }
   const u = $("cfg-username").value.trim();
   const p = $("cfg-password").value;
   if (u || p) {
@@ -338,15 +384,15 @@ async function saveConfig() {
   }
   $("save-status").textContent = "saving…";
   try {
-    const r = await fetch("/api/config", { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload)});
+    const r = await fetch("/api/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || JSON.stringify(j));
     $("save-status").textContent = "saved ✓";
-    toast("Config saved — server="+payload.server_settings.code);
+    toast("Config saved");
     fetchStats();
     loadAssetStatus();
-    setTimeout(()=> $("save-status").textContent="", 2000);
-  } catch(e) { $("save-status").textContent = "error"; toast("Save failed: "+e, false); }
+    setTimeout(() => $("save-status").textContent = "", 2000);
+  } catch (e) { $("save-status").textContent = "error"; toast("Save failed: " + e, false); }
 }
 
 function refreshAll(){ fetchStats(); loadConfig(); loadServers(); loadAssetStatus(); refreshBotStatus(); }
@@ -550,7 +596,7 @@ $("cfg-server-code")?.addEventListener("change", () => {
 });
 
 fetchStats();
-loadConfig();
+loadConfigSchema().then(() => loadConfig());
 loadServers();
 loadAssetStatus();
 refreshBotStatus();

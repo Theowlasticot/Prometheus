@@ -163,17 +163,6 @@
                 </select>
                 <span class="text-[11px] text-slate-500">Switching saves to <code>config.ini:server_settings.code</code></span>
               </label>
-              <label class="flex flex-col gap-1.5">
-                <span class="text-xs font-medium text-slate-400">Refresh interval (s)</span>
-                <input id="cfg-refresh-interval" type="number" min="600" max="86400" step="300" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" />
-                <span class="text-[11px] text-slate-500">Background check every N seconds</span>
-              </label>
-            </div>
-            <div class="grid grid-cols-2 gap-4 mt-4">
-              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3">
-                <div><p class="text-sm font-medium">Auto-update</p><p class="text-xs text-slate-500">Fetch on dashboard & bot loops</p></div>
-                <input id="cfg-auto-update" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-amber-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" />
-              </label>
               <div class="bg-slate-950 border border-slate-800 rounded-xl px-4 py-3">
                 <p class="text-xs font-medium text-slate-400">Cache dir</p>
                 <p id="cfg-cache-dir" class="text-xs font-mono text-slate-300">assets_cache</p>
@@ -201,61 +190,8 @@
             </div>
           </div>
 
-          <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-            <h3 class="text-sm font-semibold mb-4">Browser Settings</h3>
-            <div class="grid grid-cols-2 gap-4">
-              <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Headless</span><select id="cfg-headless" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm"><option value="true">true — hidden (recommended)</option><option value="false">false — visible</option></select></label>
-              <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Browsers (1–8)</span><input id="cfg-browsers" type="number" min="1" max="8" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" /></label>
-            </div>
-          </div>
-
-          <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-            <h3 class="text-sm font-semibold mb-4">Delays <span class="text-xs font-normal text-slate-500">(seconds)</span></h3>
-            <div class="grid grid-cols-3 gap-4">
-              <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Missions</span><input id="cfg-missions" type="number" min="3" max="300" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" /></label>
-              <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Transport</span><input id="cfg-transport" type="number" min="5" max="600" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" /></label>
-              <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Personnel check</span><input id="cfg-personnel-check" type="number" min="600" max="86400" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" /></label>
-            </div>
-          </div>
-
-          <div class="rounded-2xl border border-amber-500/20 bg-slate-900/60 p-5 ring-1 ring-amber-500/10">
-            <h3 class="text-sm font-semibold mb-1">Personnel Settings <span class="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/20">kept</span></h3>
-            <p class="text-xs text-slate-500 mb-4">0 Disabled · 1/2/3 days · -1 Automatic (Premium)</p>
-            <label class="flex flex-col gap-1.5 max-w-xs"><span class="text-xs font-medium text-slate-400">Hiring mode</span><select id="cfg-hiring" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono"><option value="0">0 — Disabled</option><option value="1">1 — 1 day</option><option value="2">2 — 2 days</option><option value="3">3 — 3 days</option><option value="-1">-1 — Automatic (Premium)</option></select></label>
-          </div>
-
-          <div class="rounded-2xl border border-sky-500/20 bg-slate-900/60 p-5 ring-1 ring-sky-500/10">
-            <h3 class="text-sm font-semibold mb-1">Mission / Alliance <span class="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/20">kept</span></h3>
-            <div class="grid grid-cols-2 gap-4 mt-4">
-              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3"><div><p class="text-sm font-medium">Share alliance</p><p class="text-xs text-slate-500">Auto-share missions</p></div><input id="cfg-share" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-sky-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" /></label>
-              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3"><div><p class="text-sm font-medium">Process alliance</p><p class="text-xs text-slate-500">Include alliance missions</p></div><input id="cfg-process" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-sky-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" /></label>
-            </div>
-          </div>
-
-          <div class="rounded-2xl border border-violet-500/20 bg-slate-900/60 p-5 ring-1 ring-violet-500/10">
-            <h3 class="text-sm font-semibold mb-1">Transport Settings</h3>
-            <div class="grid grid-cols-2 gap-4">
-              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3"><div><p class="text-sm font-medium">Alliance hospitals</p><p class="text-xs text-slate-500">Use alliance beds</p></div><input id="cfg-allow-hosp" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-violet-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" /></label>
-              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3"><div><p class="text-sm font-medium">Alliance cells</p><p class="text-xs text-slate-500">Use alliance jails</p></div><input id="cfg-allow-cells" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-violet-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" /></label>
-            </div>
-            <label class="flex flex-col gap-1.5 mt-4 max-w-xs"><span class="text-xs font-medium text-slate-400">Max distance (km, 0 = unlimited)</span><input id="cfg-max-distance" type="number" min="0" max="1000" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" /></label>
-          </div>
-
-          <div class="rounded-2xl border border-emerald-500/20 bg-slate-900/60 p-5 ring-1 ring-emerald-500/10">
-            <h3 class="text-sm font-semibold mb-1">Dispatch Settings</h3>
-            <div class="grid grid-cols-2 gap-4">
-              <label class="flex flex-col gap-1.5"><span class="text-xs font-medium text-slate-400">Min % to dispatch (0-100)</span><input id="cfg-min-percent" type="number" min="0" max="100" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" /></label>
-              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3"><div><p class="text-sm font-medium">Use AAR API</p><p class="text-xs text-slate-500">Faster POST alarm</p></div><input id="cfg-use-aar" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-emerald-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" /></label>
-            </div>
-          </div>
-
-          <div class="rounded-2xl border border-slate-700 bg-slate-900/60 p-5">
-            <h3 class="text-sm font-semibold mb-1">Mission Filter</h3>
-            <div class="grid grid-cols-2 gap-4">
-              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3"><div><p class="text-sm font-medium">Ignore storm</p><p class="text-xs text-slate-500">Skip storm missions</p></div><input id="cfg-ignore-storm" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-slate-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" /></label>
-              <label class="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3"><div><p class="text-sm font-medium">Ignore event</p><p class="text-xs text-slate-500">Skip event missions</p></div><input id="cfg-ignore-event" type="checkbox" class="w-10 h-6 rounded-full appearance-none bg-slate-700 checked:bg-slate-500 relative before:content-[''] before:absolute before:w-4 before:h-4 before:bg-white before:rounded-full before:top-1 before:left-1 checked:before:translate-x-4 before:transition" /></label>
-            </div>
-            <label class="flex flex-col gap-1.5 mt-4 max-w-xs"><span class="text-xs font-medium text-slate-400">Min credits (0 = all)</span><input id="cfg-min-credits" type="number" min="0" max="100000" class="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono" /></label>
+          <div id="config-cards" class="space-y-4">
+            <p class="text-sm text-slate-500">Loading config schema…</p>
           </div>
 
           <div class="flex gap-3">

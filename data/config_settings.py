@@ -155,10 +155,10 @@ def get_max_distance():
 def get_min_percent():
     _reload()
     try:
-        v = config.getint('dispatch_settings', 'min_percent', fallback=70)
+        v = config.getint('dispatch_settings', 'min_percent', fallback=100)
         return max(0, min(100, v))
     except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
-        return 70
+        return 100
 
 def get_use_aar():
     _reload()
@@ -166,6 +166,51 @@ def get_use_aar():
         return config.getboolean('dispatch_settings', 'use_aar', fallback=False)
     except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
         return False
+
+def get_require_training():
+    _reload()
+    try:
+        return config.getboolean('dispatch_settings', 'require_training', fallback=False)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return False
+
+def get_lock_ttl():
+    _reload()
+    try:
+        v = config.getint('dispatch_settings', 'lock_ttl', fallback=12)
+        return max(3, min(120, v))
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return 12
+
+def get_two_stage():
+    _reload()
+    try:
+        return config.getboolean('dispatch_settings', 'two_stage', fallback=True)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return True
+
+def get_alliance_max_tax():
+    _reload()
+    try:
+        v = config.getint('transport_settings', 'alliance_max_tax', fallback=0)
+        return max(0, min(100, v))
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return 0
+
+def get_api_mode():
+    _reload()
+    try:
+        mode = config.get('ingestion_settings', 'api_mode', fallback='auto').strip().lower()
+        return mode if mode in ('auto', 'api_v2', 'dom') else 'auto'
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return 'auto'
+
+def get_crew_scrape():
+    _reload()
+    try:
+        return config.getboolean('ingestion_settings', 'crew_scrape', fallback=True)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return True
 
 def get_ignore_storm():
     _reload()

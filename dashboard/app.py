@@ -25,6 +25,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config.ini"
 DATA_DIR = PROJECT_ROOT / "data"
 
+try:
+    from data.config_schema import CONFIG_SCHEMA, CONFIG_GROUPS, SECTIONS, validate_updates
+    HAS_SCHEMA = True
+except Exception:
+    HAS_SCHEMA = False
+    CONFIG_SCHEMA = CONFIG_GROUPS = SECTIONS = validate_updates = None
+
 # Fallback server list (19 codes) if remote cache missing — matches Server.json
 FALLBACK_SERVERS = [
     {"code":"us","url":"https://www.missionchief.com/"},
@@ -63,19 +70,19 @@ def _read_config_dict(redact: bool = False) -> Dict[str, Any]:
     out = {}
     for section in cfg.sections():
         out[section] = dict(cfg[section])
-    # Coerce known sections for UI
+    # Coerce known sections for UI (schema-driven)
     try:
-        out.setdefault("browser_settings", {})
-        out.setdefault("delays", {})
-        out.setdefault("personnel_settings", {})
-        out.setdefault("mission_settings", {})
-        out.setdefault("credentials", {})
-        out.setdefault("server_settings", {})
-        out.setdefault("transport_settings", {})
-        out.setdefault("dispatch_settings", {})
-        out.setdefault("mission_filter", {})
+        from data.config_schema import SECTION_DEFAULTS
+        for section, defaults in SECTION_DEFAULTS.items():
+            sec = out.setdefault(section, {})
+            for k, v in defaults.items():
+                sec.setdefault(k, v)
     except Exception:
         pass
+    for section in ("credentials", "browser_settings", "delays", "personnel_settings",
+                    "mission_settings", "server_settings", "transport_settings",
+                    "dispatch_settings", "mission_filter", "ingestion_settings"):
+        out.setdefault(section, {})
     if redact and "credentials" in out and "password" in out["credentials"]:
         # Never leak password — return empty if set
         pw = out["credentials"]["password"]
@@ -201,7 +208,13 @@ def _get_stats() -> Dict[str, Any]:
             patients_total += int(m.get("patients", 0) or 0)
 
     vehicle_types = len(vehicle_data) if isinstance(vehicle_data, dict) else 0
-    total_vehicles = sum(len(v) for v in vehicle_data.values()) if isinstance(vehicle_data, dict) else 0
+    total_vehicles = 0
+    if isinstance(vehicle_data, dict):
+        by_type = vehicle_data.get("by_type") or {
+            k: v for k, v in vehicle_data.items() if k not in ("by_type", "crew")
+        }
+        vehicle_types = len(by_type)
+        total_vehicles = sum(len(v) for v in by_type.values()) if by_type else 0
 
     # Config snapshot (redacted read but we need raw for stats)
     cfg_dict = _read_config_dict()
@@ -324,11 +337,6 @@ async def api_put_config(request: Request):
         body = await request.json()
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="Expected JSON object")
-        # Validate allowed sections
-        allowed_sections = {"credentials", "browser_settings", "personnel_settings", "delays", "mission_settings", "server_settings", "transport_settings", "dispatch_settings", "mission_filter"}
-        for sec in body.keys():
-            if sec not in allowed_sections:
-                raise HTTPException(status_code=400, detail=f"Unknown section: {sec}")
         # If password is "***" (redacted placeholder) treat as no-change
         if "credentials" in body and "password" in body["credentials"]:
             pw = body["credentials"]["password"]
@@ -336,52 +344,21 @@ async def api_put_config(request: Request):
                 del body["credentials"]["password"]
                 if not body["credentials"]:
                     del body["credentials"]
-        # Validate specific fields
-        if "browser_settings" in body:
-            bs = body["browser_settings"]
-            if "browsers" in bs:
-                try:
-                    b = int(bs["browsers"])
-                    if b < 1 or b > 8:
-                        raise HTTPException(status_code=400, detail="browsers must be 1-8")
-                except ValueError:
-                    raise HTTPException(status_code=400, detail="browsers must be integer")
-            if "headless" in bs:
-                v = str(bs["headless"]).lower()
-                if v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
-                    raise HTTPException(status_code=400, detail="headless must be boolean")
-        if "personnel_settings" in body:
-            ps = body["personnel_settings"]
-            if "hiring_mode" in ps:
-                try:
-                    hm = int(ps["hiring_mode"])
-                    if hm not in (-1, 0, 1, 2, 3):
-                        raise HTTPException(status_code=400, detail="hiring_mode must be -1,0,1,2,3")
-                except ValueError:
-                    raise HTTPException(status_code=400, detail="hiring_mode must be integer")
-        if "mission_settings" in body:
-            ms = body["mission_settings"]
-            for k in ("share_alliance", "process_alliance"):
-                if k in ms:
-                    v = str(ms[k]).lower()
-                    if v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
-                        raise HTTPException(status_code=400, detail=f"{k} must be boolean")
-        if "delays" in body:
-            for k in ("missions", "transport", "personnel_check"):
-                if k in body["delays"]:
-                    try:
-                        v = int(body["delays"][k])
-                        if k == "personnel_check":
-                            if v < 600 or v > 86400:
-                                raise HTTPException(status_code=400, detail="personnel_check must be 600-86400")
-                        elif k == "missions":
-                            if v < 3 or v > 300:
-                                raise HTTPException(status_code=400, detail="missions must be 3-300")
-                        elif k == "transport":
-                            if v < 5 or v > 600:
-                                raise HTTPException(status_code=400, detail="transport must be 5-600")
-                    except ValueError:
-                        raise HTTPException(status_code=400, detail=f"{k} must be integer")
+        # Schema-driven validation (single source of truth in data/config_schema.py)
+        allowed_sections = set(SECTIONS or []) | {"credentials"}
+        for sec in body.keys():
+            if sec not in allowed_sections:
+                raise HTTPException(status_code=400, detail=f"Unknown section: {sec}")
+        for section in list(body.keys()):
+            if section == "credentials":
+                continue
+            values = body[section]
+            if not isinstance(values, dict):
+                raise HTTPException(status_code=400, detail=f"{section} must be an object")
+            errors = validate_updates({section: values})
+            if errors:
+                raise HTTPException(status_code=400, detail="; ".join(errors))
+        # Manual guards for server_settings special keys (dynamic choices / path safety)
         if "server_settings" in body:
             ss = body["server_settings"]
             if "code" in ss:
@@ -389,69 +366,28 @@ async def api_put_config(request: Request):
                 valid = {s["code"] for s in FALLBACK_SERVERS}
                 if c not in valid:
                     raise HTTPException(status_code=400, detail=f"code must be one of {', '.join(sorted(valid))}")
-            if "auto_update" in ss:
-                v = str(ss["auto_update"]).lower()
-                if v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
-                    raise HTTPException(status_code=400, detail="auto_update must be boolean")
-            if "refresh_interval" in ss:
-                try:
-                    v = int(ss["refresh_interval"])
-                    if v < 600 or v > 86400:
-                        raise HTTPException(status_code=400, detail="refresh_interval must be 600-86400")
-                except ValueError:
-                    raise HTTPException(status_code=400, detail="refresh_interval must be integer")
             if "cache_dir" in ss:
                 cd = str(ss["cache_dir"]).strip()
-                if not cd or "/" in cd or "\\" in cd or ".." in cd:
-                    # allow simple dirname like assets_cache or data/cache — but prevent traversal
-                    if ".." in cd or cd.startswith("/"):
-                        raise HTTPException(status_code=400, detail="cache_dir invalid")
-        if "transport_settings" in body:
-            ts = body["transport_settings"]
-            for k in ("allow_alliance_hospitals", "allow_alliance_cells"):
-                if k in ts:
-                    v = str(ts[k]).lower()
-                    if v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
-                        raise HTTPException(status_code=400, detail=f"{k} must be boolean")
-            if "max_distance" in ts:
-                try:
-                    v = int(ts["max_distance"])
-                    if v < 0 or v > 1000:
-                        raise HTTPException(status_code=400, detail="max_distance must be 0-1000")
-                except ValueError:
-                    raise HTTPException(status_code=400, detail="max_distance must be integer")
-        if "dispatch_settings" in body:
-            ds = body["dispatch_settings"]
-            if "min_percent" in ds:
-                try:
-                    v = int(ds["min_percent"])
-                    if v < 0 or v > 100:
-                        raise HTTPException(status_code=400, detail="min_percent must be 0-100")
-                except ValueError:
-                    raise HTTPException(status_code=400, detail="min_percent must be integer")
-            if "use_aar" in ds:
-                v = str(ds["use_aar"]).lower()
-                if v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
-                    raise HTTPException(status_code=400, detail="use_aar must be boolean")
-        if "mission_filter" in body:
-            mf = body["mission_filter"]
-            for k in ("ignore_storm", "ignore_event"):
-                if k in mf:
-                    v = str(mf[k]).lower()
-                    if v not in ("true", "false", "1", "0", "yes", "no", "on", "off"):
-                        raise HTTPException(status_code=400, detail=f"{k} must be boolean")
-            if "min_credits" in mf:
-                try:
-                    v = int(mf["min_credits"])
-                    if v < 0 or v > 100000:
-                        raise HTTPException(status_code=400, detail="min_credits must be 0-100000")
-                except ValueError:
-                    raise HTTPException(status_code=400, detail="min_credits must be integer")
+                if ".." in cd or cd.startswith("/"):
+                    raise HTTPException(status_code=400, detail="cache_dir invalid")
         _write_config_dict(body)
         # If server code changed, hint to sync — don't auto-sync here, UI will call sync
         return JSONResponse({"status": "ok", "config": _read_config_dict(redact=True)})
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/config/schema")
+async def api_config_schema():
+    """Schema + defaults for the config form (dashboard generates fields from this)."""
+    try:
+        return JSONResponse({
+            "schema": CONFIG_SCHEMA or [],
+            "groups": CONFIG_GROUPS or [],
+            "defaults": {item["section"]: None for item in (CONFIG_SCHEMA or [])},
+            "config": _read_config_dict(redact=True),
+        })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
