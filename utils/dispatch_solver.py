@@ -75,10 +75,13 @@ def solve(vm, remaining, valid_per_req, avail,
             except Exception:
                 is_multi = False
             can = len(satisfiable)
+            # Resource bonus carries MAGNITUDE (not just a flag) so tied
+            # candidates prefer the highest capacity — 1 Tanker (10000L)
+            # beats 8 Quints (500L each) for the same water need.
             res_bonus = (
-                1 if (water_needed > cur_water and w > 0) else 0,
-                1 if (foam_needed > cur_foam and f > 0) else 0,
-                1 if (personnel_needed > cur_personnel and crew > 0) else 0,
+                w if (water_needed > cur_water and w > 0) else 0,
+                f if (foam_needed > cur_foam and f > 0) else 0,
+                crew if (personnel_needed > cur_personnel and crew > 0) else 0,
             )
             score = (exact, 1 if (is_multi and can >= 2) else 0, can, res_bonus, -dist)
             if best is None or score > best[0]:

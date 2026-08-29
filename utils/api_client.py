@@ -16,9 +16,93 @@ is needed. Contracts captured live (tests/recon_live.py):
   GET /api/vehicles     -> [ ... ] (flat list, no paging wrapper)
   GET /api/missions     -> 404 (mission list stays DOM-scraped)
   GET /api/credits      -> {credits_user_current, user_name, ...}
+
+Network hardening (config [api_settings]):
+  - humanized jitter between requests (min/max_jitter_ms)
+  - exponential backoff retries on 429/5xx (max_retries, backoff_factor)
+  - 429 honors the Retry-After header when present
+  - CSRF token (Rails meta csrf-token) + X-Requested-With for POSTs
 """
 import asyncio
-from data.config_settings import get_server_url, get_api_mode
+import random
+from data.config_settings import (get_server_url,
+                                  get_min_jitter_ms, get_max_jitter_ms,
+                                  get_max_retries, get_backoff_factor)
+
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+def backoff_delay(attempt: int, backoff_factor: float, retry_after=None) -> float:
+    """Pure delay computation (testable offline).
+
+    attempt: 1-based retry attempt number
+    retry_after: seconds from a Retry-After header (takes precedence)
+    """
+    if retry_after is not None:
+        try:
+            return max(0.0, float(retry_after))
+        except (TypeError, ValueError):
+            pass
+    return backoff_factor ** attempt
+
+
+async def jitter_sleep():
+    """Humanized delay between API requests (anti-bot smoothing)."""
+    lo = get_min_jitter_ms()
+    hi = max(lo, get_max_jitter_ms())
+    if hi <= 0:
+        return
+    await asyncio.sleep(random.uniform(lo, hi) / 1000.0)
+
+
+async def _request(req_ctx, method: str, url: str, headers=None, **kwargs):
+    """Single request with jitter, retry + exponential backoff."""
+    max_retries = get_max_retries()
+    factor = get_backoff_factor()
+    last_err = None
+    for attempt in range(max_retries + 1):
+        await jitter_sleep()
+        try:
+            fn = getattr(req_ctx, method.lower())
+            resp = await fn(url, headers=headers, timeout=20000, **kwargs)
+            if resp.status in RETRYABLE_STATUS and attempt < max_retries:
+                retry_after = None
+                if resp.status == 429:
+                    retry_after = resp.headers.get("retry-after")
+                delay = backoff_delay(attempt + 1, factor, retry_after)
+                last_err = RuntimeError(f"HTTP {resp.status}")
+                await asyncio.sleep(delay)
+                continue
+            return resp
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            if attempt >= max_retries:
+                raise
+            last_err = e
+            await asyncio.sleep(backoff_delay(attempt + 1, factor))
+    raise last_err if last_err else RuntimeError("request failed")
+
+
+async def extract_csrf_token(page) -> str:
+    """Rails meta csrf-token from the current DOM (empty string if absent)."""
+    try:
+        el = await page.query_selector('meta[name="csrf-token"]')
+        if el:
+            token = await el.get_attribute("content")
+            return token or ""
+    except Exception:
+        pass
+    return ""
+
+
+async def post_headers(page) -> dict:
+    """Headers for POST requests: CSRF + X-Requested-With (AJAX simulation)."""
+    headers = {"X-Requested-With": "XMLHttpRequest"}
+    token = await extract_csrf_token(page)
+    if token:
+        headers["X-CSRF-Token"] = token
+    return headers
 
 
 async def fetch_vehicles_v2(page, limit: int = 200):
@@ -29,7 +113,7 @@ async def fetch_vehicles_v2(page, limit: int = 200):
     vehicles = []
     seen_pages = 0
     while url and seen_pages < 50:
-        resp = await req.get(url, timeout=20000)
+        resp = await _request(req, "get", url)
         if not resp.ok:
             raise RuntimeError(f"vehicles v2 HTTP {resp.status}")
         body = await resp.json()
@@ -45,7 +129,7 @@ async def fetch_vehicles_v1(page):
     """Flat vehicle list (no paging wrapper on US server)."""
     base = get_server_url().rstrip("/")
     req = page.request if hasattr(page, "request") else page.context.request
-    resp = await req.get(f"{base}/api/vehicles", timeout=20000)
+    resp = await _request(req, "get", f"{base}/api/vehicles")
     if not resp.ok:
         raise RuntimeError(f"vehicles v1 HTTP {resp.status}")
     body = await resp.json()
@@ -56,7 +140,7 @@ async def fetch_buildings(page):
     """Building list with extensions + availability flags."""
     base = get_server_url().rstrip("/")
     req = page.request if hasattr(page, "request") else page.context.request
-    resp = await req.get(f"{base}/api/buildings", timeout=20000)
+    resp = await _request(req, "get", f"{base}/api/buildings")
     if not resp.ok:
         raise RuntimeError(f"buildings HTTP {resp.status}")
     body = await resp.json()
