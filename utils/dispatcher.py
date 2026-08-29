@@ -5,7 +5,7 @@ from pathlib import Path
 
 from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import get_manager_for_code
-from data.config_settings import get_share_alliance, get_process_alliance, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits
+from data.config_settings import get_share_alliance, get_process_alliance, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits, get_two_stage, get_require_training
 from utils.humanize import human_sleep, random_mouse_jitter
 from utils.mission_data import parse_missing_vehicles, get_on_scene_vehicles
 from utils.building_data import load_building_data, has_expansion
@@ -14,24 +14,23 @@ import random
 # Trailer types that require towing vehicle (cannot dispatch alone)
 TRAILER_IDS = {7, 31, 35, 36, 37, 38, 41, 46, 59}  # water trailer, foam trailer, etc. — approximate US
 # Vehicle locking to avoid double-dispatch across missions (inspired by NatesHonor)
-_LOCKED_VEHICLES: dict[str, str] = {}  # vehicle_id -> mission_id
+# Two layers: TTL in-flight lock + persisted sent map (see utils/vehicle_lock.py)
+from utils.vehicle_lock import LOCK_MANAGER
 
 def is_vehicle_locked(vid: str) -> bool:
-    return vid in _LOCKED_VEHICLES
+    return LOCK_MANAGER.is_locked(vid)
 
 def lock_vehicle(vid: str, mission_id: str):
-    _LOCKED_VEHICLES[vid] = mission_id
+    LOCK_MANAGER.lock_batch([vid], mission_id)
 
 def free_up_vehicles(mission_id: str):
-    to_free = [vid for vid, mid in _LOCKED_VEHICLES.items() if mid == mission_id]
-    for vid in to_free:
-        del _LOCKED_VEHICLES[vid]
+    LOCK_MANAGER.release_mission(mission_id)
 
 def unlock_vehicle(vid: str):
-    _LOCKED_VEHICLES.pop(vid, None)
+    LOCK_MANAGER.unlock_vehicle(vid)
 
 def free_all_vehicles():
-    _LOCKED_VEHICLES.clear()
+    LOCK_MANAGER.free_all()
 
 def greedy_plan(vehicle_manager, remaining, valid_per_req, avail):
     """Pure greedy planner (testable offline).
@@ -165,6 +164,19 @@ async def read_foam_status(page):
         pass
     return total, need
 
+async def _read_cb_amount(cb, *attr_names) -> int:
+    """Read a numeric amount attribute (water/foam) from a vehicle checkbox."""
+    for attr in attr_names:
+        try:
+            raw = await cb.get_attribute(attr)
+            if raw is not None:
+                return int(str(raw).replace(',', '').strip() or 0)
+        except ValueError:
+            continue
+        except Exception:
+            continue
+    return 0
+
 async def count_patients_needing_ambulance(page):
     """Count patients lacking an ambulance via live 'We need: Ambulance' alerts.
 
@@ -261,26 +273,36 @@ def reload_vehicle_manager():
     display_info(f"VehicleManager reloaded for code={VEHICLE_MANAGER.code} from {VEHICLE_MANAGER.data_folder}")
     return VEHICLE_MANAGER
 VEHICLE_DATA_CACHE = None
-USER_TO_SYSTEM_MAP = {} 
+USER_TO_SYSTEM_MAP = {}
+CREW_DATA = {}  # vid -> {"personnel": N, "educations": [names]}
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 async def load_vehicle_data(force=False):
-    global VEHICLE_DATA_CACHE, USER_TO_SYSTEM_MAP
+    global VEHICLE_DATA_CACHE, USER_TO_SYSTEM_MAP, CREW_DATA
     if VEHICLE_DATA_CACHE is None or force:
         try:
             with open(PROJECT_ROOT / 'data' / 'vehicle_data.json', 'r') as file:
                 VEHICLE_DATA_CACHE = json.load(file)
-            
+
+            # New schema: {"by_type": {...}, "crew": {...}}
+            # Legacy schema: {"5": [vids], ...} — migrate transparently
+            CREW_DATA = VEHICLE_DATA_CACHE.get("crew", {}) if isinstance(VEHICLE_DATA_CACHE, dict) else {}
+            by_type = VEHICLE_DATA_CACHE.get("by_type", None) if isinstance(VEHICLE_DATA_CACHE, dict) else None
+            if by_type is None:
+                by_type = {k: v for k, v in VEHICLE_DATA_CACHE.items() if k not in ("by_type", "crew")}
+                VEHICLE_DATA_CACHE = {"by_type": by_type, "crew": CREW_DATA}
+
             # Build Reverse Map for Intelligent Logic
             USER_TO_SYSTEM_MAP = {}
-            for sys_id, user_ids in VEHICLE_DATA_CACHE.items():
+            for sys_id, user_ids in by_type.items():
                 for uid in user_ids:
                     USER_TO_SYSTEM_MAP[str(uid)] = int(sys_id)
         except (OSError, json.JSONDecodeError, ValueError) as e:
             display_warning(f"Vehicle data load failed: {e}")
-            VEHICLE_DATA_CACHE = {}
+            VEHICLE_DATA_CACHE = {"by_type": {}, "crew": {}}
             USER_TO_SYSTEM_MAP = {}
+            CREW_DATA = {}
         except asyncio.CancelledError:
             raise
     return VEHICLE_DATA_CACHE
@@ -346,6 +368,8 @@ async def navigate_and_dispatch(browsers):
     # survive until the mission disappears entirely — otherwise an escalation would
     # re-dispatch vehicles that are still driving.
     try:
+        LOCK_MANAGER.load_state()
+        LOCK_MANAGER.cleanup()
         active_ids = set(mission_data.keys())
         try:
             with open(PROJECT_ROOT / 'data' / 'active_mission_ids.json', 'r') as f:
@@ -354,16 +378,16 @@ async def navigate_and_dispatch(browsers):
                 active_ids = board_ids
         except Exception:
             pass
-        locked_mids = set(_LOCKED_VEHICLES.values())
+        locked_mids = LOCK_MANAGER.sent_missions()
         stale = locked_mids - active_ids
         for mid in stale:
             free_up_vehicles(mid)
             display_info(f"Freed vehicles for completed mission {mid}")
-        if len(_LOCKED_VEHICLES) > 400:
-            display_warning(f"Lock table large ({len(_LOCKED_VEHICLES)}), clearing stale locks")
+        if len(LOCK_MANAGER) > 400:
+            display_warning(f"Lock table large ({len(LOCK_MANAGER)}), clearing stale locks")
             free_all_vehicles()
         if locked_mids:
-            display_info(f"Lock table: {len(_LOCKED_VEHICLES)} vehicles locked across {len(locked_mids)} missions")
+            display_info(f"Lock table: {len(LOCK_MANAGER)} vehicles locked across {len(locked_mids)} missions")
     except Exception as e:
         display_warning(f"Lock cleanup error: {e}")
 
@@ -511,6 +535,20 @@ async def navigate_and_dispatch(browsers):
         except Exception as e:
             display_warning(f"Load missing vehicles error {mission_id}: {e}")
 
+        # --- TWO-STAGE GUARD: same needs already dispatched & wave still in flight ---
+        # Phase 1 sends the 100% guaranteed base; Phase 2 only fires when the
+        # live needs CHANGE (escalation). While the sent vehicles are still
+        # driving (server not updated yet), an identical signature means the
+        # current dispatch is sufficient — skip to avoid a second wave.
+        try:
+            if get_two_stage():
+                needs_sig = _mission_needs_signature(data)
+                if LOCK_MANAGER.wave_still_in_flight(mission_id, needs_sig):
+                    display_info(f"🌊 {mission_id} wave in flight with identical needs — skipping re-dispatch")
+                    continue
+        except Exception as e:
+            display_warning(f"Two-stage guard error {mission_id}: {e}")
+
         # --- SELECT VEHICLES ---
         vehicle_requirements = data.get("vehicles", [])
         # Filter S5 / disabled vehicles — only available, visible, not disabled
@@ -543,9 +581,23 @@ async def navigate_and_dispatch(browsers):
         except Exception:
             available_vehicles_elements = await page.query_selector_all('input.vehicle_checkbox')
         used_vehicle_ids = []
-        
-        current_water = 0
-        current_foam = 0
+
+        # --- LIVE RESOURCE SEED (game bars count on-scene + approaching + selected) ---
+        # Read BEFORE clicking anything so the unified solver knows what is already
+        # covered and does not over-send tankers/foam units.
+        game_water = 0
+        game_foam = 0
+        try:
+            game_water, game_water_need = await read_water_status(page)
+            game_foam, game_foam_need = await read_foam_status(page)
+            if game_water_need > 0:
+                req_water = max(req_water, game_water_need)
+            if game_foam_need > 0:
+                req_foam = max(req_foam, game_foam_need)
+            if game_water > 0 or game_foam > 0:
+                display_info(f"💧 Live bars {mission_id}: water {game_water}/{req_water} foam {game_foam}/{req_foam}")
+        except Exception as e:
+            display_warning(f"Live water/foam read failed {mission_id}: {e}")
 
         # Building expansion gating (if mission_data captured it)
         required_exps = data.get("required_expansions", [])
@@ -556,7 +608,7 @@ async def navigate_and_dispatch(browsers):
                 display_warning(f"Skipping {mission_id} missing expansions {missing_exp}")
                 continue
 
-        # --- MULTI-ROLE OPTIMIZED SELECTION ---
+        # --- UNIFIED SOLVER SELECTION (roles + water + foam + personnel, one pass) ---
         # Build remaining counts per requirement (excluding ambulances)
         remaining = {}
         for req in vehicle_requirements:
@@ -575,20 +627,39 @@ async def navigate_and_dispatch(browsers):
             dist_map = await get_vehicle_distances(page, list(all_valid_ids))
         except Exception:
             dist_map = {}
-        # Build sorted list of available vehicles by distance
-        avail_sorted = []
+        # Cumulative personnel need (Phase 3 feeds real crew data)
+        personnel_needed = 0
+        try:
+            req_personnel = data.get("required_personnel") or []
+            personnel_needed = sum(int(p.get("count", 0)) for p in req_personnel if isinstance(p, dict))
+        except Exception:
+            personnel_needed = 0
+        # Crew + training data (Phase 3: CREW_DATA = {vid: {personnel, educations}})
+        await load_vehicle_data()
+        crew_map = {}
+        for vid, entry in CREW_DATA.items():
+            if isinstance(entry, dict):
+                crew_map[str(vid)] = int(entry.get("personnel", 0) or 0)
+        require_training = False
+        trained_map = {}
+        try:
+            require_training = get_require_training()
+        except Exception:
+            require_training = False
+        if require_training:
+            for vid, entry in CREW_DATA.items():
+                if not isinstance(entry, dict):
+                    continue
+                sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
+                trained_map[str(vid)] = _crew_qualified(VEHICLE_MANAGER, sys_id, entry)
+        # Build candidates: available, unlocked, with per-vehicle resources
+        avail_sorted = []  # (cb, v_id, sys_id, dist, water, foam, crew)
         for cb in available_vehicles_elements:
             try:
                 v_id = await cb.get_attribute("value")
                 if not v_id:
                     continue
                 d = dist_map.get(v_id, float('inf'))
-                # Count how many remaining requirements this vehicle can satisfy
-                can_satisfy = 0
-                for req_name, cnt in remaining.items():
-                    if cnt > 0 and v_id in valid_per_req.get(req_name, set()):
-                        can_satisfy += 1
-                # Also check if already checked/locked
                 try:
                     is_checked = await cb.is_checked()
                 except Exception:
@@ -599,17 +670,47 @@ async def navigate_and_dispatch(browsers):
                         used_vehicle_ids.append(v_id)
                         lock_vehicle(v_id, mission_id)
                     continue
-                avail_sorted.append((can_satisfy, d, cb, v_id))
+                w = await _read_cb_amount(cb, "water_amount", "wasser_amount")
+                f = await _read_cb_amount(cb, "foam_amount", "foam_amount_display")
+                crew = crew_map.get(str(v_id), 0)
+                avail_sorted.append((cb, v_id, USER_TO_SYSTEM_MAP.get(str(v_id)), d, w, f, crew))
             except Exception:
                 continue
-        # Pure planner (testable offline) — decides which vehicle fills which req
         avail_plan = [
-            (v_id, USER_TO_SYSTEM_MAP.get(str(v_id)), d, can_satisfy)
-            for can_satisfy, d, cb, v_id in avail_sorted
+            (v_id, sys_id, d, 0, w, f, crew)
+            for _cb, v_id, sys_id, d, w, f, crew in avail_sorted
         ]
-        steps, final_remaining = greedy_plan(VEHICLE_MANAGER, remaining, valid_per_req, avail_plan)
-        cb_by_vid = {v_id: cb for _, _, cb, v_id in avail_sorted}
-        # Execute the plan: click each chosen vehicle, accumulate water/foam
+        cb_by_vid = {v_id: cb for cb, v_id, _sys, _d, _w, _f, _crew in avail_sorted}
+
+        water_need_residual = max(0, req_water - game_water)
+        foam_need_residual = max(0, req_foam - game_foam)
+
+        try:
+            from utils.dispatch_solver import solve as solve_dispatch
+            steps, final_remaining, totals = solve_dispatch(
+                VEHICLE_MANAGER, remaining, valid_per_req, avail_plan,
+                water_needed=water_need_residual,
+                foam_needed=foam_need_residual,
+                personnel_needed=personnel_needed,
+                require_training=require_training,
+                crew_trained=trained_map,
+            )
+            current_water = game_water + totals["water"]
+            current_foam = game_foam + totals["foam"]
+            solver_ok = True
+        except Exception as e:
+            display_warning(f"Unified solver failed ({e}) — falling back to greedy_plan")
+            fallback_plan = [
+                (v_id, sys_id, d, 0)
+                for _cb, v_id, sys_id, d, _w, _f, _crew in avail_sorted
+                if not require_training or trained_map.get(str(v_id), True)
+            ]
+            steps, final_remaining = greedy_plan(VEHICLE_MANAGER, remaining, valid_per_req, fallback_plan)
+            current_water = game_water
+            current_foam = game_foam
+            solver_ok = False
+
+        # Execute the plan: click each chosen vehicle
         for v_id, target_req, is_multi, satisfiable_reqs in steps:
             cb = cb_by_vid.get(v_id)
             if cb is None:
@@ -617,23 +718,10 @@ async def navigate_and_dispatch(browsers):
             await click_vehicle(page, cb)
             used_vehicle_ids.append(v_id)
             lock_vehicle(v_id, mission_id)
-            # Update water/foam
-            w_raw = await cb.get_attribute("water_amount") or await cb.get_attribute("wasser_amount") or "0"
-            f_raw = await cb.get_attribute("foam_amount") or await cb.get_attribute("foam_amount_display") or "0"
-            try:
-                w = int(str(w_raw).replace(',', '').strip() or 0)
-            except ValueError:
-                w = 0
-            try:
-                f = int(str(f_raw).replace(',', '').strip() or 0)
-            except ValueError:
-                f = 0
-            current_water += w
-            current_foam += f
             if is_multi:
                 display_info(f"Selected MULTI-ROLE {target_req} (ID: {v_id}) covers {satisfiable_reqs} [Rem: {final_remaining}]")
             else:
-                display_info(f"Selected {target_req} (ID: {v_id}) [Rem: {final_remaining.get(target_req, 0)}]")
+                display_info(f"Selected {target_req} (ID: {v_id}) [Rem: {final_remaining.get(target_req, 0) if target_req else 0}]")
         remaining = final_remaining
 
         # --- AMBULANCES ---
@@ -672,87 +760,64 @@ async def navigate_and_dispatch(browsers):
                 display_info(f"Selected ambulance (ID: {v_id})")
                 ambulances_sent += 1
 
-        # --- RESOURCES (Capability Optimized) ---
+        # --- RESOURCES (fallback only: unified solver already covers water/foam) ---
         # Seed our tally from the game's live bars: the game already counts
         # on-scene + approaching + selected water/foam. Without this we would
         # re-send tankers/foam units that the game already considers covered.
-        try:
-            game_water, game_water_need = await read_water_status(page)
-            game_foam, game_foam_need = await read_foam_status(page)
-            if game_water > 0:
-                current_water = max(current_water, game_water)
-                if game_water_need > 0:
-                    req_water = max(req_water, game_water_need)
-                display_info(f"💧 Live water for {mission_id}: {game_water}/{req_water} gal (game bars)")
-            if game_foam > 0:
-                current_foam = max(current_foam, game_foam)
-                if game_foam_need > 0:
-                    req_foam = max(req_foam, game_foam_need)
-                display_info(f"🫧 Live foam for {mission_id}: {game_foam}/{req_foam} (game bars)")
-        except Exception as e:
-            display_warning(f"Live water/foam read failed {mission_id}: {e}")
+        if not solver_ok:
+            if req_water > current_water or req_foam > current_foam:
+                potential_foam_ids = VEHICLE_MANAGER.get_ids_with_capability("FOAM")
+                potential_water_ids = VEHICLE_MANAGER.get_ids_with_capability("WATER")
 
-        if req_water > current_water or req_foam > current_foam:
-            potential_foam_ids = VEHICLE_MANAGER.get_ids_with_capability("FOAM")
-            potential_water_ids = VEHICLE_MANAGER.get_ids_with_capability("WATER")
+                # Collect resource candidates, then pick the HIGHEST capacity first:
+                # e.g. 1 Foam Tender (2500f) instead of 7 Quints (25f each) for 175 foam.
+                resource_candidates = []
+                remaining_cbs = await page.query_selector_all('input.vehicle_checkbox:not(:checked)')
+                for cb in remaining_cbs:
+                    vid = await cb.get_attribute("value")
+                    if vid in used_vehicle_ids:
+                        continue
+                    sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
+                    if not sys_id:
+                        continue
+                    needs_check = False
+                    if req_foam > current_foam and sys_id in potential_foam_ids:
+                        needs_check = True
+                    if req_water > current_water and sys_id in potential_water_ids:
+                        needs_check = True
+                    if not needs_check:
+                        continue
+                    w = await _read_cb_amount(cb, "water_amount", "wasser_amount")
+                    f = await _read_cb_amount(cb, "foam_amount", "foam_amount_display")
+                    if w <= 0 and f <= 0:
+                        continue
+                    resource_candidates.append((cb, vid, w, f))
+                # Sort by the deficient resource capacity desc
+                def _res_key(item):
+                    cb, vid, w, f = item
+                    score = 0
+                    if req_water > current_water:
+                        score += w
+                    if req_foam > current_foam:
+                        score += f * 5  # prefer foam carriers when foam is the shortage
+                    return score
+                resource_candidates.sort(key=_res_key, reverse=True)
 
-            # Collect resource candidates, then pick the HIGHEST capacity first:
-            # e.g. 1 Foam Tender (2500f) instead of 7 Quints (25f each) for 175 foam.
-            resource_candidates = []
-            remaining = await page.query_selector_all('input.vehicle_checkbox:not(:checked)')
-            for cb in remaining:
-                vid = await cb.get_attribute("value")
-                if vid in used_vehicle_ids:
-                    continue
-                sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
-                if not sys_id:
-                    continue
-                needs_check = False
-                if req_foam > current_foam and sys_id in potential_foam_ids:
-                    needs_check = True
-                if req_water > current_water and sys_id in potential_water_ids:
-                    needs_check = True
-                if not needs_check:
-                    continue
-                w_raw = await cb.get_attribute("water_amount") or await cb.get_attribute("wasser_amount") or "0"
-                f_raw = await cb.get_attribute("foam_amount") or await cb.get_attribute("foam_amount_display") or "0"
-                try:
-                    w = int(str(w_raw).replace(',', '').strip() or 0)
-                except ValueError:
-                    w = 0
-                try:
-                    f = int(str(f_raw).replace(',', '').strip() or 0)
-                except ValueError:
-                    f = 0
-                if w <= 0 and f <= 0:
-                    continue
-                resource_candidates.append((cb, vid, w, f))
-            # Sort by the deficient resource capacity desc
-            def _res_key(item):
-                cb, vid, w, f = item
-                score = 0
-                if req_water > current_water:
-                    score += w
-                if req_foam > current_foam:
-                    score += f * 5  # prefer foam carriers when foam is the shortage
-                return score
-            resource_candidates.sort(key=_res_key, reverse=True)
-
-            for cb, vid, w, f in resource_candidates:
-                if current_water >= req_water and current_foam >= req_foam:
-                    break
-                useful = False
-                if req_water > current_water and w > 0:
-                    current_water += w
-                    useful = True
-                if req_foam > current_foam and f > 0:
-                    current_foam += f
-                    useful = True
-                if useful:
-                    await click_vehicle(page, cb)
-                    used_vehicle_ids.append(vid)
-                    lock_vehicle(vid, mission_id)
-                    display_info(f"Resource Vehicle ({vid}): +{w}W / +{f}F")
+                for cb, vid, w, f in resource_candidates:
+                    if current_water >= req_water and current_foam >= req_foam:
+                        break
+                    useful = False
+                    if req_water > current_water and w > 0:
+                        current_water += w
+                        useful = True
+                    if req_foam > current_foam and f > 0:
+                        current_foam += f
+                        useful = True
+                    if useful:
+                        await click_vehicle(page, cb)
+                        used_vehicle_ids.append(vid)
+                        lock_vehicle(vid, mission_id)
+                        display_info(f"Resource Vehicle ({vid}): +{w}W / +{f}F")
 
         # --- AUTOMATION SYNERGIES (EMS Chief, Sheriff, Fly-Car, Manpower) ---
         try:
@@ -916,11 +981,13 @@ async def navigate_and_dispatch(browsers):
                     except Exception as e:
                         display_warning(f"⛔ No vehicles for {mission_id} (diag err {e})")
                         display_info(f"⛔ No vehicles selected for {mission_id}. Skipping dispatch click.")
+                    free_up_vehicles(mission_id)
                     continue
                 try:
                     is_disabled = await btn.get_attribute("disabled")
                     if is_disabled is not None:
                         display_warning(f"Dispatch button disabled for {mission_id}")
+                        free_up_vehicles(mission_id)
                         continue
                 except Exception:
                     pass
@@ -935,8 +1002,20 @@ async def navigate_and_dispatch(browsers):
                 except Exception:
                     pass
                 display_info(f"🚀 Dispatched mission {mission_id} via click ({len(used_vehicle_ids)} vehicles)")
+                dispatched = True
             else:
                 display_warning(f"No dispatch button for {mission_id}")
+                free_up_vehicles(mission_id)
+
+        if dispatched:
+            # Persist which vehicles were sent (freed only when the mission leaves the board)
+            LOCK_MANAGER.mark_sent(used_vehicle_ids, mission_id)
+            # Record the wave so the two-stage guard skips identical re-dispatch
+            try:
+                if get_two_stage():
+                    LOCK_MANAGER.set_wave(mission_id, _mission_needs_signature(data), used_vehicle_ids)
+            except Exception:
+                pass
 
 async def check_mission_requirements_global_percent(page, mission_data):
     # Use same visible+enabled filter as dispatch
@@ -1030,13 +1109,49 @@ async def click_vehicle(page, checkbox):
     await human_sleep(0.12, 0.55)
 
 async def get_valid_ids_for_type(target_name):
-    user_vehicle_data = await load_vehicle_data() 
+    user_vehicle_data = await load_vehicle_data()
+    by_type = user_vehicle_data.get("by_type", {}) if isinstance(user_vehicle_data, dict) else {}
     allowed_generic_ids = VEHICLE_MANAGER.get_valid_ids(target_name)
     
     valid_ids_in_garage = []
     for allowed_id in allowed_generic_ids:
         str_id = str(allowed_id)
-        if str_id in user_vehicle_data:
-            valid_ids_in_garage.extend(user_vehicle_data[str_id])
+        if str_id in by_type:
+            valid_ids_in_garage.extend(by_type[str_id])
             
     return list(set(valid_ids_in_garage))
+
+def _mission_needs_signature(data: dict) -> str:
+    """Stable signature of a mission's current needs — used by the two-stage
+    guard to detect 'same wave' (skip) vs 'escalation' (phase 2 dispatch)."""
+    reqs = sorted([(r.get("name", ""), r.get("count", 0)) for r in (data.get("vehicles") or [])])
+    return json.dumps({
+        "reqs": reqs,
+        "water": int(data.get("water_needed", 0) or 0),
+        "foam": int(data.get("foam_needed", 0) or 0),
+        "patients": int(data.get("patients", 0) or 0),
+        "crashed": int(data.get("crashed_cars", 0) or 0),
+    }, sort_keys=True)
+
+def _crew_qualified(vm, sys_id, crew_entry) -> bool:
+    """Training gate: True if the vehicle needs no training or its assigned
+    crew holds every required course. Fail-open when crew data is absent
+    (scraping disabled/failed) or nobody is on board."""
+    if not crew_entry or not isinstance(crew_entry, dict):
+        return True
+    if int(crew_entry.get("personnel", 0) or 0) <= 0:
+        return True
+    try:
+        req = vm.get_required_training(sys_id) or []
+    except Exception:
+        return True
+    if not req:
+        return True
+    eds = [vm.normalize(e) for e in crew_entry.get("educations", []) if e]
+    for r in req:
+        m = re.search(r':\s*(.+?)\s*\(\d+d\)', r)
+        course = m.group(1) if m else r
+        cn = vm.normalize(course)
+        if cn and not any(cn in e or e in cn for e in eds):
+            return False
+    return True
