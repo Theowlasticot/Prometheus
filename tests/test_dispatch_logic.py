@@ -430,6 +430,49 @@ class TestTrailerEligibility(unittest.TestCase):
         self.assertEqual(trailer_local_towers("111_222", [41], self._pool(sys_id=10)), [])
 
 
+class TestCapabilityMasks(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.vm = VehicleManager(code="us")
+        from utils.vehicle_manager import (
+            CAP_ENGINE, CAP_LADDER, CAP_HEAVY_RESCUE, CAP_TANKER,
+            CAP_WATER, CAP_FOAM, CAP_HAZMAT,
+        )
+        cls.CAP = dict(ENGINE=CAP_ENGINE, LADDER=CAP_LADDER,
+                       HEAVY_RESCUE=CAP_HEAVY_RESCUE, TANKER=CAP_TANKER,
+                       WATER=CAP_WATER, FOAM=CAP_FOAM, HAZMAT=CAP_HAZMAT)
+
+    def test_masks_derived_from_data(self):
+        self.assertTrue(self.vm.capability_masks, "masks must be derived at load time")
+        quint = self.vm.capability_mask(13)
+        self.assertTrue(quint & self.CAP["ENGINE"], "Quint must carry ENGINE")
+        self.assertTrue(quint & self.CAP["LADDER"], "Quint must carry LADDER")
+        re_m = self.vm.capability_mask(18)
+        self.assertTrue(re_m & self.CAP["ENGINE"])
+        self.assertTrue(re_m & self.CAP["HEAVY_RESCUE"])
+        pt = self.vm.capability_mask(33)
+        self.assertTrue(pt & self.CAP["ENGINE"])
+        self.assertTrue(pt & self.CAP["TANKER"])
+
+    def test_requirement_mask(self):
+        self.assertTrue(self.vm.requirement_mask("Heavy Rescue Vehicle") & self.CAP["HEAVY_RESCUE"])
+        wm = self.vm.requirement_mask("Water Tanker")
+        self.assertTrue(wm & self.CAP["TANKER"] and wm & self.CAP["WATER"])
+        self.assertTrue(self.vm.requirement_mask("HazMat Unit") & self.CAP["HAZMAT"])
+
+    def test_mask_fallback_resolves_unknown_name(self):
+        # Index/regex/fuzzy must fail for this synthetic name -> mask fallback
+        ids = self.vm.get_valid_ids("Advanced Foam Sprayer")
+        self.assertTrue(ids, "mask fallback should resolve via FOAM capability")
+        for vid in ids:
+            self.assertTrue(self.vm.capability_mask(vid) & self.CAP["FOAM"],
+                            f"{vid} must carry FOAM bit")
+
+    def test_direct_match_still_wins(self):
+        self.assertTrue(self.vm.get_valid_ids("ambulance"))
+        self.assertTrue(self.vm.get_valid_ids("battalion chief unit"))
+
+
 class TestRadiusAndStation(unittest.TestCase):
     def test_radius_gate(self):
         self.assertTrue(within_dispatch_radius(5.0, 0))

@@ -5,6 +5,68 @@ import re
 from pathlib import Path
 from utils.pretty_print import display_error, display_warning
 
+# ---------------------------------------------------------------------------
+# Capability bitmasks (R5) — derived from multi_role.json + .mscv data,
+# never hardcoded per server. Used as a resolution fallback and for
+# capability queries. Bit values are stable across servers.
+# ---------------------------------------------------------------------------
+CAP_ENGINE = 1 << 0
+CAP_LADDER = 1 << 1
+CAP_HEAVY_RESCUE = 1 << 2
+CAP_TANKER = 1 << 3
+CAP_HAZMAT = 1 << 4
+CAP_AIR = 1 << 5
+CAP_COMMAND = 1 << 6
+CAP_WATER = 1 << 7
+CAP_FOAM = 1 << 8
+CAP_AMBULANCE = 1 << 9
+CAP_POLICE = 1 << 10
+CAP_ARFF = 1 << 11
+CAP_BOAT = 1 << 12
+CAP_TOW = 1 << 13
+CAP_ALS = 1 << 14
+CAP_PRISONER = 1 << 15
+CAP_PERSONNEL = 1 << 16
+
+# keyword (i18n-friendly) -> capability bit
+CAPABILITY_KEYWORDS = {
+    "ENGINE": (CAP_ENGINE, ["engine", "firetruck", "pumper", "feuerwehr", "pompe", "fourgon"]),
+    "LADDER": (CAP_LADDER, ["ladder", "platform", "quint", "tower", "echelle", "échelle"]),
+    "HEAVY_RESCUE": (CAP_HEAVY_RESCUE, ["heavy rescue", "rescue", "désincarcération", "secours"]),
+    "TANKER": (CAP_TANKER, ["tanker", "tender", "citerne", "tlf"]),
+    "HAZMAT": (CAP_HAZMAT, ["hazmat", "haz mat"]),
+    "AIR": (CAP_AIR, ["air", "cascade", "breathe", "breathing"]),
+    "COMMAND": (CAP_COMMAND, ["command", "chief", "mcv", "battalion", "elk"]),
+    "WATER": (CAP_WATER, ["water", "eau", "wasser", "liter", "gallon"]),
+    "FOAM": (CAP_FOAM, ["foam", "mousse", "schaum"]),
+    "AMBULANCE": (CAP_AMBULANCE, ["ambulance", "ems", "rtw", "ktw", "paramedic"]),
+    "POLICE": (CAP_POLICE, ["police", "patrol", "sheriff", "fbi", "swat", "fu stw", "fustw"]),
+    "ARFF": (CAP_ARFF, ["arff", "airport", "crash tender"]),
+    "BOAT": (CAP_BOAT, ["boat", "swift water", "swiftwater", "ocean"]),
+    "TOW": (CAP_TOW, ["tow", "wrecker", "abschlepp"]),
+    "ALS": (CAP_ALS, ["als", "advanced life support"]),
+    "PRISONER": (CAP_PRISONER, ["prisoner", "gefangene", "arrest", "prisonnier"]),
+    "PERSONNEL": (CAP_PERSONNEL, ["personnel", "crew", "personal"]),
+}
+
+# existing KEYWORD_MAP capability names -> bitmask bits
+_KEYWORD_MAP_BITS = {
+    "FOAM": CAP_FOAM, "WATER": CAP_WATER, "PERSONNEL": CAP_PERSONNEL,
+    "PRISONER": CAP_PRISONER, "PATIENT": CAP_AMBULANCE, "TOW": CAP_TOW,
+    "HAZMAT": CAP_HAZMAT, "HRV": CAP_HEAVY_RESCUE, "PLATFORM": CAP_LADDER,
+    "ARFF": CAP_ARFF, "SWIFTWATER": CAP_BOAT, "TACTICAL": CAP_POLICE,
+    "ALS": CAP_ALS, "OCEAN_NAV": CAP_BOAT,
+}
+
+def text_mask(text):
+    """Capability mask for a requirement/vehicle name (pure helper)."""
+    mask = 0
+    low = (text or "").lower()
+    for _name, (bit, keywords) in CAPABILITY_KEYWORDS.items():
+        if any(k in low for k in keywords):
+            mask |= bit
+    return mask
+
 class VehicleManager:
     def __init__(self, data_folder=None, code=None):
         # Dynamic code + cache resolution: prefers assets_cache/{code}, falls back to bundled us/
@@ -49,9 +111,11 @@ class VehicleManager:
         self.regex_rules = []    # List of {regex: compiled_re, id: system_id}
         self.vehicle_properties = {} # Map: System ID -> {extend: dict, is_matchless: bool}
         self.vehicle_capabilities = {} # Map: System ID -> set(["FOAM", "WATER", "SWAT", "PRISONER", ...])
+        self.capability_masks = {} # Map: System ID -> int bitmask (derived, R5)
         
         self.load_database()
         self.load_additional_data()
+        self._build_capability_masks()
 
     def load_additional_data(self):
         """Load multi-role, trailers, training, equipment_capacity, automation from data/ directory (wiki/forum + your table). Keep in sync with GitHub .mscv via remote sync for vehicle definitions, but these matrices are local and updated via git."""
@@ -102,6 +166,42 @@ class VehicleManager:
         except Exception as e:
             display_warning(f"Could not load automation.json: {e}")
             self.automation = {}
+
+    def _build_capability_masks(self):
+        """Derive per-vehicle capability bitmasks from .mscv keyword caps +
+        multi_role.json roles — server-agnostic, no hardcoded vehicle ids."""
+        self.capability_masks = {}
+        for vid, caps in self.vehicle_capabilities.items():
+            mask = 0
+            for c in caps:
+                mask |= _KEYWORD_MAP_BITS.get(str(c).upper(), 0)
+            self.capability_masks[vid] = mask
+        try:
+            for mname, minfo in self.multi_role.items():
+                role_mask = 0
+                for role in minfo.get("roles", []):
+                    role_mask |= text_mask(role)
+                for vid in minfo.get("mscv_ids", []):
+                    self.capability_masks[vid] = self.capability_masks.get(vid, 0) | role_mask
+        except Exception:
+            pass
+
+    def capability_mask(self, system_id):
+        """Capability bitmask of a vehicle type (0 = unknown)."""
+        return self.capability_masks.get(system_id, 0)
+
+    def requirement_mask(self, text):
+        """Capability bitmask implied by a requirement name."""
+        return text_mask(text)
+
+    def get_ids_by_mask(self, mask, exclude_matchless=True):
+        """Vehicle ids whose capability mask overlaps the given mask."""
+        return [
+            vid for vid, m in self.capability_masks.items()
+            if (m & mask)
+            and (not exclude_matchless
+                 or not self.vehicle_properties.get(vid, {}).get('is_matchless', False))
+        ]
 
     def get_required_training(self, vehicle_id: int) -> list:
         """Return list of required trainings for a vehicle from training.json (search by mscv_ids)."""
@@ -331,6 +431,15 @@ class VehicleManager:
                         found_ids.update(valid_fuzzy)
                 # Also handle is_matchless for direct/regex: if direct matched is_matchless, keep but warn
                 # (is_matchless vehicles like EMS Chief should still be dispatchable via direct)
+
+        # 3bis. Capability bitmask fallback (R5): index/regex/fuzzy found nothing —
+        # resolve by derived capability overlap (multi-server safe)
+        if not found_ids:
+            req_mask = text_mask(requirement_text)
+            if req_mask:
+                for vid, mask in self.capability_masks.items():
+                    if (mask & req_mask) and not self.vehicle_properties.get(vid, {}).get('is_matchless', False):
+                        found_ids.add(vid)
 
         return list(found_ids)
 
