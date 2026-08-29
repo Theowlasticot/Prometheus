@@ -108,18 +108,16 @@ def greedy_plan(vehicle_manager, remaining, valid_per_req, avail):
     return steps, rem
 
 def order_ambulance_ids(vehicle_manager, ambulance_ids, user_to_system_map):
-    """Pure ambulances (types 5, 11...) first; combined vehicles
-    (EMS Fire Engine, Tactical, HazMat Ambulance) last — they must not be
-    pulled off the fire scene for transport when a pure ambulance is free."""
-    multi_sys = set()
-    try:
-        for minfo in getattr(vehicle_manager, 'multi_role', {}).values():
-            multi_sys.update(minfo.get('mscv_ids', []))
-    except Exception:
-        pass
-    pure = [v for v in ambulance_ids if user_to_system_map.get(str(v)) not in multi_sys]
-    combi = [v for v in ambulance_ids if user_to_system_map.get(str(v)) in multi_sys]
-    return pure + combi
+    """Pure ambulances (5, 11, 20: standard/ALS/Mass Casualty) first; combined
+    vehicles (48, 49, 50: EMS Fire Engine, Tactical, HazMat Ambulance) last —
+    they must not be pulled off the fire scene for transport when a pure
+    ambulance is free."""
+    AMBULANCE_PURE_TYPES = {5, 11, 20}
+    AMBULANCE_COMBI_TYPES = {48, 49, 50}
+    pure = [v for v in ambulance_ids if user_to_system_map.get(str(v)) in AMBULANCE_PURE_TYPES]
+    combi = [v for v in ambulance_ids if user_to_system_map.get(str(v)) in AMBULANCE_COMBI_TYPES]
+    others = [v for v in ambulance_ids if v not in pure and v not in combi]
+    return pure + combi + others
 
 async def read_water_status(page):
     """Read the game's live water bars (at mission / driving / selected) -> (total, need).

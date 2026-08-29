@@ -113,15 +113,14 @@ class TestDispatchPlan(unittest.TestCase):
             ids = await get_valid_ids_for_type("ambulance")
             return order_ambulance_ids(self.vm, ids, disp.USER_TO_SYSTEM_MAP)
         ordered = asyncio.run(_build())
-        multi_sys = set()
-        for minfo in self.vm.multi_role.values():
-            multi_sys.update(minfo.get("mscv_ids", []))
-        # First items must be pure (sys not multi-role); combined vehicles last
+        PURE = {5, 11, 20}
+        COMBI = {48, 49, 50}
+        # First items must be pure (5/11/20); combined vehicles last
         if ordered:
             first_sys = disp.USER_TO_SYSTEM_MAP.get(str(ordered[0]))
-            self.assertNotIn(first_sys, multi_sys, "first ambulance should be a pure one")
-        pure_section = [v for v in ordered if disp.USER_TO_SYSTEM_MAP.get(str(v)) not in multi_sys]
-        combi_section = [v for v in ordered if disp.USER_TO_SYSTEM_MAP.get(str(v)) in multi_sys]
+            self.assertIn(first_sys, PURE, "first ambulance should be a pure one")
+        pure_section = [v for v in ordered if disp.USER_TO_SYSTEM_MAP.get(str(v)) in PURE]
+        combi_section = [v for v in ordered if disp.USER_TO_SYSTEM_MAP.get(str(v)) in COMBI]
         self.assertEqual(ordered, pure_section + combi_section)
 
     def test_trailer_needs_tower(self):
