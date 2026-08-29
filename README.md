@@ -199,6 +199,9 @@ The dispatch core was rebuilt to eliminate over-dispatching and wrong dispatchin
 * **Trailer pairing** (`strict_trailer_pairing`) : a trailer is only dispatched with a towing vehicle from its own station (checkbox `building_id`); otherwise the trailer is unchecked (atomic rule).
 * **Dispatch radius** (`max_dispatch_distance`) : solver ignores candidates beyond N km (0 = unlimited).
 * **API hardening** (`[api_settings]`) : humanized jitter between requests, exponential backoff retries on 429/5xx (honoring `Retry-After`), Rails CSRF token + `X-Requested-With` headers on POST alarms.
+* **Unified mission delta** (`extract_missing_requirements`) : single helper computing `R_missing = required − (on scene + driving + locally locked/sent)` — used by both the mission scrape and the live dispatch re-read, so alliance vehicles and the bot's own in-flight dispatches are always deducted before solving.
+* **MRV scarcity solver** : requirements with the fewest candidate providers are resolved first; the only Rescue Engine targets the scarce Heavy Rescue slot instead of a generic Engine slot.
+* **Capability bitmasks** : per-vehicle capability masks derived from `multi_role.json` + `.mscv` at load (no hardcoded ids) — fallback resolution for unknown requirement names, multi-server safe.
 
 ### ✅ Completed Features
 
