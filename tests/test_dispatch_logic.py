@@ -17,6 +17,7 @@ from utils.dispatch_solver import solve as solve_dispatch
 from utils.dispatch_solver import prioritize_requirements_by_scarcity
 from utils.vehicle_lock import VehicleLockManager
 from utils.api_client import backoff_delay
+from utils.mission_data import extract_missing_requirements
 import utils.dispatcher as disp
 from utils.dispatcher import (
     greedy_plan,
@@ -148,7 +149,8 @@ class TestDispatchPlan(unittest.TestCase):
 
 
 # Water capacity per system id for solver tests (from equipment_capacity.json)
-_WATER = {33: 2500, 6: 10000, 13: 500, 4: 750, 18: 750}
+# US types: 7 = Water Tanker, 33 = Pumper-Tanker, 13 = Quint, 4/18 = Rescue/HR
+_WATER = {33: 2500, 7: 10000, 13: 500, 4: 750, 18: 750}
 
 
 class TestUnifiedSolver(unittest.TestCase):
@@ -190,7 +192,8 @@ class TestUnifiedSolver(unittest.TestCase):
         reqs = {"Firetruck": 1}
         valid = self._valid_per_req(reqs)
         avail = self._avail(valid, water_map={})  # no water anywhere
-        # Add a tanker (sys 6) as candidate — valid for no role but carries water
+        # Add a synthetic water carrier (sys 6, real type is Mobile Air — the
+        # solver only reads water magnitude, so any non-role type works).
         tanker_vids = _load_garage().get("6", [])[:1]
         for vid in tanker_vids:
             avail.append((vid, 6, float("inf"), 0, 10000, 0, 0))
@@ -471,6 +474,33 @@ class TestCapabilityMasks(unittest.TestCase):
     def test_direct_match_still_wins(self):
         self.assertTrue(self.vm.get_valid_ids("ambulance"))
         self.assertTrue(self.vm.get_valid_ids("battalion chief unit"))
+
+
+class TestDeltaExtraction(unittest.TestCase):
+    def test_delta_subtracts_engaged_and_pending(self):
+        static = {"Firetruck": 4, "Heavy Rescue Vehicle": 2, "Police Car": 3}
+        valid = lambda r: {"Firetruck": {1, 13, 18, 33},
+                           "Heavy Rescue Vehicle": {18},
+                           "Police Car": {10}}[r]
+        engaged = {13: 2, 10: 1}
+        pending = {13: 1}
+        missing = extract_missing_requirements(static, engaged, pending, valid)
+        self.assertEqual(missing, {"Firetruck": 1, "Heavy Rescue Vehicle": 2, "Police Car": 2})
+
+    def test_delta_floor_zero(self):
+        static = {"Firetruck": 1}
+        missing = extract_missing_requirements(static, {13: 5}, {}, lambda r: {1, 13})
+        self.assertEqual(missing, {})
+
+    def test_delta_skips_ambulance(self):
+        static = {"ambulance": 3, "Firetruck": 1}
+        missing = extract_missing_requirements(static, {}, {}, lambda r: {5})
+        self.assertEqual(missing, {"Firetruck": 1})
+
+    def test_delta_ignores_unrelated_types(self):
+        static = {"Firetruck": 2}
+        missing = extract_missing_requirements(static, {5: 9, 10: 4}, {}, lambda r: {13, 18})
+        self.assertEqual(missing, {"Firetruck": 2})
 
 
 class TestRadiusAndStation(unittest.TestCase):
