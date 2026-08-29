@@ -13,6 +13,25 @@ Preserves the historical guarantees of greedy_plan:
 """
 
 
+def prioritize_requirements_by_scarcity(remaining, valid_per_req, avail):
+    """MRV ordering: most constrained requirements first.
+
+    remaining: {req_name: count}
+    valid_per_req: {req_name: set(vid)}
+    avail: list of (vid, sys_id, dist, can_satisfy, water, foam, crew)
+
+    Returns [(req_name, scarcity, count)] sorted by scarcity ascending
+    (scarcity = number of available candidates able to cover the req).
+    """
+    scored = []
+    for req_name, count in remaining.items():
+        vids = valid_per_req.get(req_name, set())
+        scarcity = sum(1 for v in avail if v[0] in vids)
+        scored.append((scarcity, req_name, count))
+    scored.sort(key=lambda x: (x[0], x[1]))
+    return [(name, scarcity, count) for scarcity, name, count in scored]
+
+
 def solve(vm, remaining, valid_per_req, avail,
           water_needed=0, foam_needed=0, personnel_needed=0,
           require_training=False, crew_trained=None):
@@ -46,6 +65,14 @@ def solve(vm, remaining, valid_per_req, avail,
                 and cur_personnel >= personnel_needed)
 
     while not _done():
+        # MRV: requirements with the fewest candidate providers get priority.
+        # Protects rare/polyvalent vehicles (e.g. the only Rescue Engine)
+        # from being burned on a generic slot while the scarce slot stays empty.
+        scarcity = {}
+        for r in rem:
+            vids = valid_per_req.get(r, set())
+            scarcity[r] = sum(1 for item in cand if item[0] in vids)
+        min_scarcity = min(scarcity.values()) if scarcity else 0
         best = None
         for item in cand:
             vid, sys_id, dist, can_satisfy, w, f, crew = item
@@ -69,6 +96,9 @@ def solve(vm, remaining, valid_per_req, avail,
                 norm = vm.normalize(prim)
                 if any(vm.normalize(r) == norm for r in satisfiable):
                     exact = 1
+            # Rare-need boost: candidate covers the currently most
+            # constrained requirement (MRV heuristic)
+            rare_need = 1 if any(scarcity.get(r, 0) == min_scarcity for r in satisfiable) else 0
             is_multi = False
             try:
                 is_multi = bool(sys_id and vm.is_true_multi_role(sys_id))
@@ -83,14 +113,15 @@ def solve(vm, remaining, valid_per_req, avail,
                 f if (foam_needed > cur_foam and f > 0) else 0,
                 crew if (personnel_needed > cur_personnel and crew > 0) else 0,
             )
-            score = (exact, 1 if (is_multi and can >= 2) else 0, can, res_bonus, -dist)
+            score = (exact, rare_need, 1 if (is_multi and can >= 2) else 0, can, res_bonus, -dist)
             if best is None or score > best[0]:
                 best = (score, item, satisfiable)
         if best is None:
             break
         _score, (vid, sys_id, dist, can_satisfy, w, f, crew), satisfiable = best
-        # Target req = own role name if requested, else the most demanded one
-        target_req = max(satisfiable, key=lambda r: rem[r]) if satisfiable else None
+        # Target req = own role name if requested, else the scarcest
+        # satisfiable requirement (tie-break: most demanded)
+        target_req = max(satisfiable, key=lambda r: (-scarcity.get(r, 0), -rem[r], r)) if satisfiable else None
         prim = None
         try:
             prim = vm.primary_name(sys_id)
