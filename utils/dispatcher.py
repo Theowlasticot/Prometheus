@@ -5,7 +5,7 @@ from pathlib import Path
 
 from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import get_manager_for_code
-from data.config_settings import get_share_alliance, get_process_alliance, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits, get_two_stage, get_require_training, get_alliance_delay, get_max_dispatch_distance, get_strict_trailer_pairing
+from data.config_settings import get_share_alliance, get_process_alliance, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits, get_two_stage, get_require_training, get_alliance_delay, get_max_dispatch_distance, get_strict_trailer_pairing, get_require_personnel_education, get_strict_crew, get_fallback_dispatch, get_radius_by_class, get_alliance_mode
 from utils.humanize import human_sleep, random_mouse_jitter
 from utils.mission_data import parse_missing_vehicles, get_on_scene_vehicles, get_mission_age, extract_missing_requirements, pending_counts_for_mission
 from utils.building_data import load_building_data, has_expansion
@@ -438,6 +438,23 @@ async def navigate_and_dispatch(browsers):
             await human_sleep(0.9, 0.4)
             continue
 
+        # --- ALLIANCE CREDIT-ONLY MODE ---
+        # Earn the alliance credit with ONE nearby unit instead of solving
+        # the whole mission with local fleet (preserves fleet for personal
+        # missions). The grace period above still applies.
+        if is_alliance_mission:
+            try:
+                alliance_mode = get_alliance_mode()
+            except Exception:
+                alliance_mode = "full"
+            if alliance_mode == "credit_only":
+                sent = await _dispatch_credit_unit(page, mission_id)
+                if sent:
+                    display_info(f"🤝 Credit-only unit sent for alliance mission {mission_id}")
+                else:
+                    display_info(f"🤝 Credit-only: no eligible unit for alliance mission {mission_id}")
+                continue
+
         # --- LIVE RED WINDOW RE-READ (fenêtre rouge = source de vérité) ---
         # The file snapshot may be stale (vehicles arrived since scrape). Re-read
         # the red window on the page right now and use it authoritatively.
@@ -480,46 +497,70 @@ async def navigate_and_dispatch(browsers):
         # vehicles (own + allied) so we never double our allies.
         if not is_missing_mission:
             try:
-                req_total = data.get("required_total") or {}
-                if req_total:
-                    # Wait briefly for the vehicle tables (AJAX). Fresh missions
-                    # have NO tables at all (they only render once a vehicle is
-                    # assigned) — that is normal, not an error.
-                    on_scene = await get_on_scene_vehicles(page, wait_tables=True, wait_timeout=2500)
-                    tables_present = await page.query_selector(
-                        '#mission_vehicle_at_mission, #mission_vehicle_driving, '
-                        '#mission_vehicle_staging, #mission_vehicle_on_the_way'
-                    )
-                    final_needed = []
-                    if tables_present:
-                        # Unified delta (R3): R_missing = required - (on scene +
-                        # driving) - (locally locked/sent vehicles)
-                        pending_counts = pending_counts_for_mission(mission_id)
-                        missing = extract_missing_requirements(
-                            req_total, on_scene, pending_counts,
-                            VEHICLE_MANAGER.get_valid_ids,
-                        )
-                        final_needed = [
-                            {"name": req_name, "count": count}
-                            for req_name, count in missing.items()
-                        ]
-                    else:
-                        # Fresh mission — fall back to the scrape-time needed list
-                        # (scrape had its own AJAX waits; red window re-checked above).
-                        final_needed = [r for r in data.get("vehicles", []) if "ambulance" not in r.get("name", "").lower()]
+                # Precise live ambulance need: only patients WITHOUT an
+                # assigned ambulance (game shows 'We need: Ambulance' per
+                # uncovered patient; assigned ones show missing_text null).
+                amb_needed_live, live_patients = await count_patients_needing_ambulance(page)
+                if live_patients > 0:
+                    patients_count = amb_needed_live
+                    display_info(f"🚑 Live patients for {mission_id}: {live_patients} total, {amb_needed_live} need ambulance")
+                try:
+                    fallback_dispatch = get_fallback_dispatch()
+                except Exception:
+                    fallback_dispatch = False
+                if not fallback_dispatch:
+                    # G2 — trust the game's red window as the only missing-vehicles
+                    # signal. When it is absent the mission needs no more units,
+                    # and subtracting the full template from on-scene counts would
+                    # re-introduce CHANCE requirements that never triggered
+                    # (e.g. a 20% HazMat the game did not roll) -> over-dispatch.
+                    # Only ambulance transport needs are handled live here.
                     data = dict(data)
-                    data["vehicles"] = final_needed
-                    # Precise live ambulance need: only patients WITHOUT an
-                    # assigned ambulance (game shows 'We need: Ambulance' per
-                    # uncovered patient; assigned ones show missing_text null).
-                    amb_needed_live, live_patients = await count_patients_needing_ambulance(page)
-                    if live_patients > 0:
-                        patients_count = amb_needed_live
-                        display_info(f"🚑 Live patients for {mission_id}: {live_patients} total, {amb_needed_live} need ambulance")
-                    display_info(f"📐 Live standard for {mission_id}: needed {final_needed} | water={req_water} foam={req_foam} | patients={patients_count} (on-scene {len(on_scene)})")
-                    if not final_needed and req_water == 0 and req_foam == 0 and patients_count == 0 and crashed_cars == 0:
-                        display_info(f"✅ {mission_id} fully satisfied live — skipping")
+                    data["vehicles"] = []
+                    data["water_needed"] = 0
+                    data["foam_needed"] = 0
+                    data["crashed_cars"] = 0
+                    req_water = 0
+                    req_foam = 0
+                    crashed_cars = 0
+                    if patients_count == 0:
+                        display_info(f"✅ {mission_id} game shows no missing vehicles — skipping (fallback_dispatch=off)")
                         continue
+                    display_info(f"📐 {mission_id} no missing vehicles per game — ambulance need {patients_count}")
+                else:
+                    req_total = data.get("required_total") or {}
+                    if req_total:
+                        # Wait briefly for the vehicle tables (AJAX). Fresh missions
+                        # have NO tables at all (they only render once a vehicle is
+                        # assigned) — that is normal, not an error.
+                        on_scene = await get_on_scene_vehicles(page, wait_tables=True, wait_timeout=2500)
+                        tables_present = await page.query_selector(
+                            '#mission_vehicle_at_mission, #mission_vehicle_driving, '
+                            '#mission_vehicle_staging, #mission_vehicle_on_the_way'
+                        )
+                        final_needed = []
+                        if tables_present:
+                            # Unified delta (R3): R_missing = required - (on scene +
+                            # driving) - (locally locked/sent vehicles)
+                            pending_counts = pending_counts_for_mission(mission_id)
+                            missing = extract_missing_requirements(
+                                req_total, on_scene, pending_counts,
+                                VEHICLE_MANAGER.get_valid_ids,
+                            )
+                            final_needed = [
+                                {"name": req_name, "count": count}
+                                for req_name, count in missing.items()
+                            ]
+                        else:
+                            # Fresh mission — fall back to the scrape-time needed list
+                            # (scrape had its own AJAX waits; red window re-checked above).
+                            final_needed = [r for r in data.get("vehicles", []) if "ambulance" not in r.get("name", "").lower()]
+                        data = dict(data)
+                        data["vehicles"] = final_needed
+                        display_info(f"📐 Live standard for {mission_id}: needed {final_needed} | water={req_water} foam={req_foam} | patients={patients_count} (on-scene {len(on_scene)})")
+                        if not final_needed and req_water == 0 and req_foam == 0 and patients_count == 0 and crashed_cars == 0:
+                            display_info(f"✅ {mission_id} fully satisfied live — skipping")
+                            continue
             except Exception as e:
                 display_warning(f"Live standard failed {mission_id}: {e} — using file data")
 
@@ -660,23 +701,60 @@ async def navigate_and_dispatch(browsers):
             if isinstance(entry, dict):
                 crew_map[str(vid)] = int(entry.get("personnel", 0) or 0)
         require_training = False
+        strict_crew = False
         trained_map = {}
         try:
             require_training = get_require_training()
         except Exception:
             require_training = False
-        if require_training:
+        try:
+            strict_crew = get_strict_crew()
+        except Exception:
+            strict_crew = False
+        if require_training or strict_crew:
             for vid, entry in CREW_DATA.items():
                 if not isinstance(entry, dict):
                     continue
                 sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
-                trained_map[str(vid)] = _crew_qualified(VEHICLE_MANAGER, sys_id, entry)
+                trained_map[str(vid)] = _crew_qualified(VEHICLE_MANAGER, sys_id, entry, strict=strict_crew)
+
+        # G1 — education-aware personnel needs (e.g. "8x HazMat" must be 8 crew
+        # members holding the HazMat course, not just 8 heads).
+        personnel_needs = None
+        crew_educations = None
+        try:
+            if get_require_personnel_education():
+                req_personnel = data.get("required_personnel") or []
+                named = [p for p in req_personnel
+                         if isinstance(p, dict) and p.get("name") and int(p.get("count", 0) or 0) > 0]
+                if named:
+                    personnel_needs = [
+                        {"name": p["name"], "count": int(p.get("count", 0) or 0)}
+                        for p in named
+                    ]
+                    crew_educations = {}
+                    for vid, entry in CREW_DATA.items():
+                        if not isinstance(entry, dict):
+                            continue
+                        crew_educations[str(vid)] = [
+                            VEHICLE_MANAGER.normalize(e)
+                            for e in entry.get("educations", []) if e
+                        ]
+        except Exception:
+            personnel_needs = None
+            crew_educations = None
         # Build candidates: available, unlocked, within dispatch radius,
         # with per-vehicle resources
         try:
             max_disp = get_max_dispatch_distance()
         except Exception:
             max_disp = 0
+        # G4 — per-class radius (police:15,ambulance:15,fire:35,heavy:60,...)
+        # Class entry > 0 overrides the global value for that class only.
+        try:
+            radius_by_class = get_radius_by_class()
+        except Exception:
+            radius_by_class = {}
         # Upstream trailer eligibility (strict pairing): a trailer is only a
         # solver candidate when a qualified towing vehicle exists in its own
         # station (fms 1/2, unlocked, crew trained if require_training).
@@ -716,7 +794,7 @@ async def navigate_and_dispatch(browsers):
                     except Exception:
                         towing_ids = []
                     eligible = trailer_local_towers(tv_bid, towing_ids, tower_pool,
-                                                    require_training=require_training,
+                                                    require_training=require_training or strict_crew,
                                                     trained_map=trained_map)
                     if not eligible:
                         excluded_trailers.add(tv_id)
@@ -729,8 +807,15 @@ async def navigate_and_dispatch(browsers):
                     continue
                 if v_id in excluded_trailers:
                     continue
+                sys_id_c = USER_TO_SYSTEM_MAP.get(str(v_id))
                 d = dist_map.get(v_id, float('inf'))
-                if not within_dispatch_radius(d, max_disp):
+                # Per-class radius gate (G4): class km if set (>0), else global
+                try:
+                    vclass = VEHICLE_MANAGER.vehicle_class(sys_id_c)
+                except Exception:
+                    vclass = "default"
+                eff_radius = resolve_dispatch_radius(radius_by_class, vclass, max_disp)
+                if not within_dispatch_radius(d, eff_radius):
                     continue
                 try:
                     is_checked = await cb.is_checked()
@@ -742,10 +827,16 @@ async def navigate_and_dispatch(browsers):
                         used_vehicle_ids.append(v_id)
                         lock_vehicle(v_id, mission_id)
                     continue
+                # G5 — strict crew: never fail-open on specialized vehicles whose
+                # crew is unknown/absent (their mission timer would stay blocked).
+                if strict_crew:
+                    crew_entry = CREW_DATA.get(str(v_id))
+                    if not _crew_qualified(VEHICLE_MANAGER, sys_id_c, crew_entry, strict=True):
+                        continue
                 w = await _read_cb_amount(cb, "water_amount", "wasser_amount")
                 f = await _read_cb_amount(cb, "foam_amount", "foam_amount_display")
                 crew = crew_map.get(str(v_id), 0)
-                avail_sorted.append((cb, v_id, USER_TO_SYSTEM_MAP.get(str(v_id)), d, w, f, crew))
+                avail_sorted.append((cb, v_id, sys_id_c, d, w, f, crew))
             except Exception:
                 continue
         avail_plan = [
@@ -766,6 +857,8 @@ async def navigate_and_dispatch(browsers):
                 personnel_needed=personnel_needed,
                 require_training=require_training,
                 crew_trained=trained_map,
+                personnel_needs=personnel_needs,
+                crew_educations=crew_educations,
             )
             current_water = game_water + totals["water"]
             current_foam = game_foam + totals["foam"]
@@ -775,7 +868,7 @@ async def navigate_and_dispatch(browsers):
             fallback_plan = [
                 (v_id, sys_id, d, 0)
                 for _cb, v_id, sys_id, d, _w, _f, _crew in avail_sorted
-                if not require_training or trained_map.get(str(v_id), True)
+                if not (require_training or strict_crew) or trained_map.get(str(v_id), True)
             ]
             steps, final_remaining = greedy_plan(VEHICLE_MANAGER, remaining, valid_per_req, fallback_plan)
             current_water = game_water
@@ -988,7 +1081,7 @@ async def navigate_and_dispatch(browsers):
                         if is_tower:
                             # Training gate: tractor crew must hold the required course
                             # (e.g. Truck Driver's License) when require_training is on.
-                            if require_training and not trained_map.get(str(vid), True):
+                            if (require_training or strict_crew) and not trained_map.get(str(vid), True):
                                 try:
                                     req_train = VEHICLE_MANAGER.get_required_training(sys_id) if hasattr(VEHICLE_MANAGER, 'get_required_training') else []
                                 except Exception:
@@ -1040,87 +1133,41 @@ async def navigate_and_dispatch(browsers):
         # --- SEND ---
         # Try AAR API first if enabled (faster, avoids checkbox flakiness), else click button
         dispatched = False
-        if get_use_aar() and used_vehicle_ids:
-            try:
-                base = get_server_url().rstrip("/")
-                # Use Playwright APIRequestContext via page.request
-                # POST to /missions/{id}/alarm with vehicle_ids[]
-                # Rails CSRF + X-Requested-With headers (token from meta tag)
-                payload = {"vehicle_ids[]": used_vehicle_ids, "next_mission": "0"}
-                # page.request is available on page.context.request or page.request
-                req_ctx = page.request if hasattr(page, "request") else page.context.request
-                try:
-                    from utils.api_client import post_headers
-                    headers = await post_headers(page)
-                except Exception:
-                    headers = {}
-                resp = await req_ctx.post(f"{base}/missions/{mission_id}/alarm", form=payload, headers=headers)
-                if resp.ok:
-                    display_info(f"🚀 Dispatched via AAR API {mission_id} ({len(used_vehicle_ids)} vehicles)")
-                    dispatched = True
-                else:
-                    display_warning(f"AAR dispatch failed {resp.status}: {await resp.text()[:200]} — falling back to click")
-            except Exception as e:
-                display_warning(f"AAR error {mission_id}: {e}")
-
+        if used_vehicle_ids:
+            dispatched = await _post_alarm(page, mission_id, used_vehicle_ids)
         if not dispatched:
-            btn = await page.query_selector('#alert_btn')
-            if btn:
-                if len(used_vehicle_ids) == 0:
-                    # Diagnostic: list which requirements had no valid vehicles in garage
-                    try:
-                        missing_types = []
-                        # Build set of available vids for quick lookup
-                        avail_vids = set()
-                        for cb in available_vehicles_elements:
-                            try:
-                                v = await cb.get_attribute("value")
-                                if v:
-                                    avail_vids.add(v)
-                            except Exception:
-                                continue
-                        for req in vehicle_requirements:
-                            if "ambulance" in req["name"].lower():
-                                continue
-                            valid = await get_valid_ids_for_type(req["name"])
-                            if not valid:
-                                missing_types.append(f"{req['name']} (no garage type)")
-                            else:
-                                # Check if any valid is in avail
-                                if not any(vid in avail_vids for vid in valid):
-                                    missing_types.append(f"{req['name']} (no available, need {req['count']} have {len(valid)} types)")
-                        if missing_types:
-                            display_warning(f"⛔ No vehicles for {mission_id}: missing {', '.join(missing_types[:3])}{'...' if len(missing_types)>3 else ''} | have {len(avail_vids)} avail, {len(vehicle_requirements)} reqs")
+            if len(used_vehicle_ids) == 0:
+                # Diagnostic: list which requirements had no valid vehicles in garage
+                try:
+                    missing_types = []
+                    # Build set of available vids for quick lookup
+                    avail_vids = set()
+                    for cb in available_vehicles_elements:
+                        try:
+                            v = await cb.get_attribute("value")
+                            if v:
+                                avail_vids.add(v)
+                        except Exception:
+                            continue
+                    for req in vehicle_requirements:
+                        if "ambulance" in req["name"].lower():
+                            continue
+                        valid = await get_valid_ids_for_type(req["name"])
+                        if not valid:
+                            missing_types.append(f"{req['name']} (no garage type)")
                         else:
-                            display_info(f"⛔ No vehicles selected for {mission_id}. Skipping dispatch click.")
-                    except Exception as e:
-                        display_warning(f"⛔ No vehicles for {mission_id} (diag err {e})")
+                            # Check if any valid is in avail
+                            if not any(vid in avail_vids for vid in valid):
+                                missing_types.append(f"{req['name']} (no available, need {req['count']} have {len(valid)} types)")
+                    if missing_types:
+                        display_warning(f"⛔ No vehicles for {mission_id}: missing {', '.join(missing_types[:3])}{'...' if len(missing_types)>3 else ''} | have {len(avail_vids)} avail, {len(vehicle_requirements)} reqs")
+                    else:
                         display_info(f"⛔ No vehicles selected for {mission_id}. Skipping dispatch click.")
-                    free_up_vehicles(mission_id)
-                    continue
-                try:
-                    is_disabled = await btn.get_attribute("disabled")
-                    if is_disabled is not None:
-                        display_warning(f"Dispatch button disabled for {mission_id}")
-                        free_up_vehicles(mission_id)
-                        continue
-                except Exception:
-                    pass
-                try:
-                    await btn.scroll_into_view_if_needed()
-                except Exception:
-                    await page.evaluate('(btn) => btn.scrollIntoView()', btn)
-                await btn.click()
-                # Verify dispatch succeeded (check for success alert or mission gone)
-                try:
-                    await page.wait_for_timeout(800)
-                except Exception:
-                    pass
-                display_info(f"🚀 Dispatched mission {mission_id} via click ({len(used_vehicle_ids)} vehicles)")
-                dispatched = True
-            else:
-                display_warning(f"No dispatch button for {mission_id}")
-                free_up_vehicles(mission_id)
+                except Exception as e:
+                    display_warning(f"⛔ No vehicles for {mission_id} (diag err {e})")
+                    display_info(f"⛔ No vehicles selected for {mission_id}. Skipping dispatch click.")
+            free_up_vehicles(mission_id)
+            continue
 
         if dispatched:
             # Persist which vehicles were sent (freed only when the mission leaves the board)
@@ -1256,6 +1303,32 @@ def within_dispatch_radius(d, max_disp) -> bool:
         return True
     return d <= max_disp
 
+def resolve_dispatch_radius(radius_by_class, vclass, global_max) -> float:
+    """G4 — per-class radius override: a class entry > 0 wins, else global."""
+    try:
+        cls_radius = radius_by_class.get(vclass) if radius_by_class else None
+    except Exception:
+        cls_radius = None
+    if cls_radius is not None and cls_radius > 0:
+        return cls_radius
+    return global_max
+
+def credit_unit_eligible(sys_id, fms, checked, locked, vm) -> bool:
+    """G3 — pure eligibility for the credit-only alliance unit: available
+    (fms 1/2), not checked/locked, not a trailer, known type."""
+    if checked or locked:
+        return False
+    if str(fms).strip() and str(fms).strip() not in ("1", "2"):
+        return False
+    if sys_id is None:
+        return False
+    try:
+        if vm.is_trailer(sys_id):
+            return False
+    except Exception:
+        pass
+    return True
+
 def _same_station(bid_a, bid_b) -> bool:
     """Checkbox building_id can be composite ('111111_222222'). Two vehicles
     share a station if any component matches."""
@@ -1320,20 +1393,128 @@ async def _build_tower_pool(checkboxes):
             continue
     return pool
 
-def _crew_qualified(vm, sys_id, crew_entry) -> bool:
+async def _post_alarm(page, mission_id, vehicle_ids) -> bool:
+    """Dispatch the selected vehicles: AAR API first (if enabled), else the
+    alarm button. Returns True when the dispatch was confirmed.
+
+    Extracted so the credit-only alliance path can reuse the exact same
+    sending logic (CSRF headers, payload shape, click fallback).
+    """
+    if not vehicle_ids:
+        return False
+    if get_use_aar():
+        try:
+            base = get_server_url().rstrip("/")
+            # POST /missions/{id}/alarm with vehicle_ids[] — Rails CSRF +
+            # X-Requested-With headers (token from meta tag)
+            payload = {"vehicle_ids[]": vehicle_ids, "next_mission": "0"}
+            req_ctx = page.request if hasattr(page, "request") else page.context.request
+            try:
+                from utils.api_client import post_headers
+                headers = await post_headers(page)
+            except Exception:
+                headers = {}
+            resp = await req_ctx.post(f"{base}/missions/{mission_id}/alarm", form=payload, headers=headers)
+            if resp.ok:
+                display_info(f"🚀 Dispatched via AAR API {mission_id} ({len(vehicle_ids)} vehicles)")
+                return True
+            display_warning(f"AAR dispatch failed {resp.status}: {await resp.text()[:200]} — falling back to click")
+        except Exception as e:
+            display_warning(f"AAR error {mission_id}: {e}")
+    btn = await page.query_selector('#alert_btn')
+    if not btn:
+        display_warning(f"No dispatch button for {mission_id}")
+        return False
+    try:
+        is_disabled = await btn.get_attribute("disabled")
+        if is_disabled is not None:
+            display_warning(f"Dispatch button disabled for {mission_id}")
+            return False
+    except Exception:
+        pass
+    try:
+        await btn.scroll_into_view_if_needed()
+    except Exception:
+        await page.evaluate('(btn) => btn.scrollIntoView()', btn)
+    await btn.click()
+    # Verify dispatch succeeded (check for success alert or mission gone)
+    try:
+        await page.wait_for_timeout(800)
+    except Exception:
+        pass
+    display_info(f"🚀 Dispatched mission {mission_id} via click ({len(vehicle_ids)} vehicles)")
+    return True
+
+
+async def _dispatch_credit_unit(page, mission_id) -> bool:
+    """G3 — send exactly ONE eligible unit to an alliance mission (credit only).
+
+    Picks the nearest available (fms 1/2), unlocked, non-trailer vehicle that
+    is neither locked nor already checked, clicks it and fires the dispatch.
+    """
+    try:
+        cbs = await page.query_selector_all('input.vehicle_checkbox')
+    except Exception:
+        return False
+    candidates = []
+    for cb in cbs:
+        try:
+            if not await cb.is_visible():
+                continue
+            dis = await cb.get_attribute("disabled")
+            if dis is not None:
+                continue
+            if hasattr(cb, "is_disabled") and await cb.is_disabled():
+                continue
+            v_id = await cb.get_attribute("value")
+            if not v_id:
+                continue
+            sys_id = USER_TO_SYSTEM_MAP.get(str(v_id))
+            if not sys_id:
+                continue
+            fms = (await cb.get_attribute("fms")) or ""
+            try:
+                checked = await cb.is_checked()
+            except Exception:
+                checked = False
+            if not credit_unit_eligible(sys_id, fms, checked, is_vehicle_locked(v_id), VEHICLE_MANAGER):
+                continue
+            candidates.append((v_id, cb))
+        except Exception:
+            continue
+    if not candidates:
+        return False
+    vids = [v for v, _cb in candidates]
+    dist_map = await get_vehicle_distances(page, vids)
+    candidates.sort(key=lambda t: dist_map.get(t[0], float('inf')))
+    vid, cb = candidates[0]
+    await click_vehicle(page, cb)
+    lock_vehicle(vid, mission_id)
+    sent = await _post_alarm(page, mission_id, [vid])
+    if sent:
+        LOCK_MANAGER.mark_sent([vid], mission_id)
+    else:
+        unlock_vehicle(vid)
+    return sent
+
+
+def _crew_qualified(vm, sys_id, crew_entry, strict=False) -> bool:
     """Training gate: True if the vehicle needs no training or its assigned
-    crew holds every required course. Fail-open when crew data is absent
-    (scraping disabled/failed) or nobody is on board."""
-    if not crew_entry or not isinstance(crew_entry, dict):
-        return True
-    if int(crew_entry.get("personnel", 0) or 0) <= 0:
-        return True
+    crew holds every required course.
+
+    strict=True (G5): vehicles that DO require training fail when crew data
+    is absent (scraping disabled/failed) or nobody is on board — no fail-open.
+    """
     try:
         req = vm.get_required_training(sys_id) or []
     except Exception:
-        return True
+        req = []
     if not req:
         return True
+    if not crew_entry or not isinstance(crew_entry, dict):
+        return not strict
+    if int(crew_entry.get("personnel", 0) or 0) <= 0:
+        return not strict
     eds = [vm.normalize(e) for e in crew_entry.get("educations", []) if e]
     for r in req:
         m = re.search(r':\s*(.+?)\s*\(\d+d\)', r)

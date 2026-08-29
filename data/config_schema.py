@@ -52,6 +52,10 @@ CONFIG_SCHEMA = [
     {"section": "mission_settings", "key": "alliance_delay", "type": "int", "default": "45",
      "min": 0, "max": 3600, "group": "mission", "label": "Alliance delay (s)",
      "help": "Grace period before dispatching alliance missions (lets allies respond). 0 = immediate"},
+    {"section": "mission_settings", "key": "alliance_mode", "type": "str", "default": "full",
+     "group": "mission", "label": "Alliance mode",
+     "help": "full = solve the remaining gap with your fleet; credit_only = send a single nearby unit to earn credits",
+     "choices": [("full", "full — fair-share resolution"), ("credit_only", "credit_only — single unit")]},
 
     # --- transport_settings ---
     {"section": "transport_settings", "key": "allow_alliance_hospitals", "type": "bool", "default": "true",
@@ -87,6 +91,18 @@ CONFIG_SCHEMA = [
     {"section": "dispatch_settings", "key": "strict_trailer_pairing", "type": "bool", "default": "true",
      "group": "dispatch", "label": "Strict trailer pairing",
      "help": "Require a towing vehicle in the SAME station as the trailer; uncheck otherwise"},
+    {"section": "dispatch_settings", "key": "require_personnel_education", "type": "bool", "default": "false",
+     "group": "dispatch", "label": "Match mission personnel education",
+     "help": "Match required personnel by education (e.g. 8x HazMat) against each vehicle's crew, not just headcount"},
+    {"section": "dispatch_settings", "key": "strict_crew", "type": "bool", "default": "false",
+     "group": "dispatch", "label": "Strict crew validation",
+     "help": "Exclude specialized vehicles when their crew data is unknown or empty (no fail-open)"},
+    {"section": "dispatch_settings", "key": "fallback_dispatch", "type": "bool", "default": "false",
+     "group": "dispatch", "label": "Template fallback dispatch",
+     "help": "When the red window is absent, subtract on-scene vehicles from the full template. Off = trust the game's red window only (avoids dispatching chance requirements that never triggered)"},
+    {"section": "dispatch_settings", "key": "radius_by_class", "type": "str", "default": "",
+     "group": "dispatch", "label": "Per-class radius (km)",
+     "help": "Comma list, e.g. police:15,ambulance:15,fire:35,heavy:60,trailer:0. Empty/0 falls back to max_dispatch_distance"},
 
     # --- mission_filter ---
     {"section": "mission_filter", "key": "ignore_storm", "type": "bool", "default": "false",

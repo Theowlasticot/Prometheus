@@ -212,6 +212,61 @@ def get_strict_trailer_pairing():
     except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
         return True
 
+def get_require_personnel_education():
+    _reload()
+    try:
+        return config.getboolean('dispatch_settings', 'require_personnel_education', fallback=False)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return False
+
+def get_strict_crew():
+    _reload()
+    try:
+        return config.getboolean('dispatch_settings', 'strict_crew', fallback=False)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return False
+
+def get_fallback_dispatch():
+    _reload()
+    try:
+        return config.getboolean('dispatch_settings', 'fallback_dispatch', fallback=False)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return False
+
+def get_radius_by_class():
+    """Parse 'police:15,ambulance:15,fire:35,heavy:60' -> {'police': 15.0, ...}.
+
+    Invalid entries are ignored; values <= 0 mean 'no limit for this class'
+    (falls back to the global max_dispatch_distance).
+    """
+    _reload()
+    out = {}
+    try:
+        raw = config.get('dispatch_settings', 'radius_by_class', fallback="")
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        return out
+    for part in str(raw or "").split(","):
+        part = part.strip()
+        if not part or ":" not in part:
+            continue
+        cls, _, val = part.partition(":")
+        cls = cls.strip().lower()
+        try:
+            km = float(str(val).strip())
+        except ValueError:
+            continue
+        if cls:
+            out[cls] = km
+    return out
+
+def get_alliance_mode():
+    _reload()
+    try:
+        v = config.get('mission_settings', 'alliance_mode', fallback='full').strip().lower()
+        return v if v in ("full", "credit_only") else "full"
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        return "full"
+
 def get_min_jitter_ms():
     _reload()
     try:

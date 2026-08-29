@@ -493,6 +493,50 @@ class VehicleManager:
             pass
         return False
 
+    def vehicle_class(self, system_id):
+        """Dispatch radius class for a vehicle (per-class distance gates).
+
+        Returns one of: police, ambulance, fire, heavy, trailer, default.
+        Derived from capability bitmasks + trailer table (multi-server safe):
+          - trailers are always 'trailer' (usually want 0/unlimited: paired locally)
+          - police-only units -> 'police'
+          - ambulances -> 'ambulance'
+          - hazmat/arff/heavy rescue/ladder/air/boat/command -> 'heavy'
+          - engines/tankers/water/foam carriers -> 'fire'
+          - everything else -> 'default' (global radius only)
+        """
+        if system_id is None:
+            return "default"
+        try:
+            if self.is_trailer(system_id):
+                return "trailer"
+        except Exception:
+            pass
+        mask = 0
+        try:
+            prim = self.primary_name(system_id)
+        except Exception:
+            prim = None
+        if prim:
+            mask = text_mask(prim)
+        if mask == 0:
+            # Fallback for matchless/unnamed types: derived capability mask
+            try:
+                mask = self.capability_mask(system_id) or 0
+            except Exception:
+                mask = 0
+        # Police first: patrol cars can carry a PATIENT bit via the generic
+        # 'transport' keyword (prisoner transport) — they stay police.
+        if mask & CAP_POLICE:
+            return "police"
+        if mask & CAP_AMBULANCE:
+            return "ambulance"
+        if mask & (CAP_HAZMAT | CAP_ARFF | CAP_HEAVY_RESCUE | CAP_LADDER | CAP_AIR | CAP_BOAT | CAP_COMMAND):
+            return "heavy"
+        if mask & (CAP_ENGINE | CAP_TANKER | CAP_WATER | CAP_FOAM):
+            return "fire"
+        return "default"
+
 def get_manager_for_code(code=None):
     """Helper to get VehicleManager for current server code (DRY for dispatcher/mission_data)."""
     if code is None:
