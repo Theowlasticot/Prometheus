@@ -56,3 +56,7 @@ config.local.ini
 test-results/
 playwright-report/
 playwright/.cache/
+
+# Live recon tools & captures — dev-only, never commit (game account data)
+tests/fixtures/
+tests/recon_live*.py

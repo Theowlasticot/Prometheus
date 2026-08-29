@@ -5,27 +5,39 @@ Run: venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 import asyncio
 import json
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils.vehicle_manager import VehicleManager
+from utils.dispatch_solver import solve as solve_dispatch
+from utils.vehicle_lock import VehicleLockManager
 import utils.dispatcher as disp
 from utils.dispatcher import (
     greedy_plan,
     order_ambulance_ids,
     load_vehicle_data,
     get_valid_ids_for_type,
+    _mission_needs_signature,
 )
 
 
 
+def _load_garage():
+    """vehicle_data.json -> by_type map (both legacy and new schema)."""
+    vd = json.loads((Path(__file__).resolve().parent.parent / "data" / "vehicle_data.json").read_text())
+    if "by_type" in vd:
+        return vd["by_type"]
+    return {k: v for k, v in vd.items() if k not in ("by_type", "crew")}
+
+
 def _garage_candidates(vm, valid_per_req):
     """All garage (vid, sys_id) pairs usable for planning."""
-    vd = json.loads((Path(__file__).resolve().parent.parent / "data" / "vehicle_data.json").read_text())
     out = []
-    for sys_id, ids in vd.items():
+    for sys_id, ids in _load_garage().items():
         for vid in ids:
             out.append((vid, int(sys_id)))
     return out
@@ -128,6 +140,194 @@ class TestDispatchPlan(unittest.TestCase):
         self.assertEqual(self.vm.get_towing_vehicles(77), [41])
         self.assertTrue(self.vm.is_trailer(78))
         self.assertEqual(set(self.vm.get_towing_vehicles(78)), {8, 1, 10, 4, 18})
+
+
+# Water capacity per system id for solver tests (from equipment_capacity.json)
+_WATER = {33: 2500, 6: 10000, 13: 500, 4: 750, 18: 750}
+
+
+class TestUnifiedSolver(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.vm = VehicleManager(code="us")
+        asyncio.run(load_vehicle_data(force=True))
+
+    def _valid_per_req(self, reqs):
+        async def _build():
+            return {r: set(await get_valid_ids_for_type(r)) for r in reqs}
+        return asyncio.run(_build())
+
+    def _avail(self, valid_per_req, water_map=None, crew_map=None):
+        water_map = water_map or {}
+        crew_map = crew_map or {}
+        avail = []
+        for sys_id, ids in _load_garage().items():
+            for vid in ids:
+                if any(vid in ids_set for ids_set in valid_per_req.values()):
+                    avail.append((vid, int(sys_id), float("inf"), 0,
+                                  water_map.get(int(sys_id), 0), 0,
+                                  crew_map.get(str(vid), 0)))
+        return avail
+
+    def test_water_aware_picks_pumper_tankers_over_dry_engines(self):
+        reqs = {"Firetruck": 2}
+        valid = self._valid_per_req(reqs)
+        avail = self._avail(valid, water_map=_WATER)
+        steps, rem, totals = solve_dispatch(
+            self.vm, dict(reqs), valid, avail, water_needed=4000)
+        self.assertTrue(all(c == 0 for c in rem.values()))
+        sys_ids = [disp.USER_TO_SYSTEM_MAP.get(str(s[0])) for s in steps]
+        self.assertEqual(sys_ids.count(33), 2, f"expected 2 Pumper-Tankers, got {sys_ids}")
+        self.assertEqual(len(steps), 2, "no extra tanker needed — water covered by engines")
+        self.assertGreaterEqual(totals["water"], 4000)
+
+    def test_solver_needs_tanker_when_engines_dry(self):
+        reqs = {"Firetruck": 1}
+        valid = self._valid_per_req(reqs)
+        avail = self._avail(valid, water_map={})  # no water anywhere
+        # Add a tanker (sys 6) as candidate — valid for no role but carries water
+        tanker_vids = _load_garage().get("6", [])[:1]
+        for vid in tanker_vids:
+            avail.append((vid, 6, float("inf"), 0, 10000, 0, 0))
+        steps, rem, totals = solve_dispatch(
+            self.vm, dict(reqs), valid, avail, water_needed=8000)
+        sys_ids = [disp.USER_TO_SYSTEM_MAP.get(str(s[0])) for s in steps]
+        self.assertIn(6, sys_ids, "tanker needed when engines carry no water")
+        self.assertGreaterEqual(totals["water"], 8000)
+
+    def test_solver_parity_quint_covers_engine_and_ladder(self):
+        reqs = {"Firetruck": 1, "Platform Truck": 1}
+        valid = self._valid_per_req(reqs)
+        avail = self._avail(valid)
+        steps, rem, _ = solve_dispatch(self.vm, dict(reqs), valid, avail)
+        self.assertTrue(all(c == 0 for c in rem.values()))
+        sys_ids = [disp.USER_TO_SYSTEM_MAP.get(str(s[0])) for s in steps]
+        self.assertIn(13, sys_ids, "expected a Quint in the plan")
+        self.assertLessEqual(len(steps), sum(reqs.values()))
+
+    def test_solver_parity_mcv_not_bcu(self):
+        reqs = {"battalion chief unit": 4, "mobile command vehicle": 1}
+        valid = self._valid_per_req(reqs)
+        avail = self._avail(valid)
+        steps, rem, _ = solve_dispatch(self.vm, dict(reqs), valid, avail)
+        self.assertTrue(all(c == 0 for c in rem.values()))
+        sys_ids = [disp.USER_TO_SYSTEM_MAP.get(str(s[0])) for s in steps]
+        self.assertEqual(sys_ids.count(12), 1)
+        self.assertEqual(sys_ids.count(3), 4)
+
+    def test_solver_parity_carpentry_case(self):
+        reqs = {
+            "firetruck": 9,
+            "platform truck": 1,
+            "battalion chief unit": 4,
+            "mobile command vehicle": 1,
+            "water tanker": 1,
+            "patrol car": 2,
+        }
+        valid = self._valid_per_req(reqs)
+        avail = self._avail(valid)
+        steps, rem, _ = solve_dispatch(self.vm, dict(reqs), valid, avail)
+        self.assertTrue(all(c == 0 for c in rem.values()))
+        sys_ids = [disp.USER_TO_SYSTEM_MAP.get(str(s[0])) for s in steps]
+        self.assertEqual(sys_ids.count(12), 1)
+        self.assertEqual(sys_ids.count(3), 4)
+        self.assertLessEqual(len(steps), sum(reqs.values()))
+
+    def test_solver_personnel_constraint(self):
+        reqs = {"Firetruck": 1}
+        valid = self._valid_per_req(reqs)
+        avail = self._avail(valid, crew_map={v: 6 for v in disp.USER_TO_SYSTEM_MAP})
+        steps, _, totals = solve_dispatch(
+            self.vm, dict(reqs), valid, avail, personnel_needed=6)
+        self.assertEqual(len(steps), 1)
+        self.assertGreaterEqual(totals["personnel"], 6)
+
+    def test_solver_no_needs_no_steps(self):
+        steps, rem, totals = solve_dispatch(self.vm, {}, {}, [])
+        self.assertEqual(steps, [])
+        self.assertEqual(totals, {"water": 0, "foam": 0, "personnel": 0})
+
+
+class TestVehicleLocks(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        import utils.vehicle_lock as vl
+        self._orig_state_path = vl.STATE_PATH
+        vl.STATE_PATH = Path(self.tmpdir.name) / "dispatch_state.json"
+        self.m = VehicleLockManager()
+
+    def tearDown(self):
+        import utils.vehicle_lock as vl
+        vl.STATE_PATH = self._orig_state_path
+        self.tmpdir.cleanup()
+
+    def test_inflight_ttl_expiry(self):
+        self.m.lock_batch(["9515320", "12742431"], "m1")
+        self.assertTrue(self.m.is_locked("9515320"))
+        # Simulate TTL elapsed
+        self.m._inflight = {"9515320": (time.time() - 999, "m1")}
+        self.assertFalse(self.m.is_locked("9515320"))
+
+    def test_sent_persists_and_release(self):
+        self.m.mark_sent(["9515320"], "m1")
+        self.assertTrue(self.m.is_sent("9515320"))
+        # Reload from disk (simulate restart)
+        m2 = VehicleLockManager()
+        m2.load_state()
+        self.assertTrue(m2.is_sent("9515320"))
+        self.m.release_mission("m1")
+        self.assertFalse(self.m.is_sent("9515320"))
+        m3 = VehicleLockManager()
+        m3.load_state()
+        self.assertFalse(m3.is_sent("9515320"))
+
+    def test_wave_still_in_flight(self):
+        sig = '{"needs": 1}'
+        self.m.set_wave("m1", sig, ["9515320"])
+        self.m.mark_sent(["9515320"], "m1")
+        self.assertTrue(self.m.wave_still_in_flight("m1", sig))
+        self.assertFalse(self.m.wave_still_in_flight("m1", '{"needs": 2}'))
+        self.assertFalse(self.m.wave_still_in_flight("m2", sig))
+        self.m.release_mission("m1")
+        self.assertFalse(self.m.wave_still_in_flight("m1", sig))
+
+    def test_unlock_on_failure_frees_wave(self):
+        self.m.set_wave("m1", "sig", ["9515320"])
+        self.m.mark_sent(["9515320"], "m1")
+        self.m.unlock_on_failure("m1")
+        self.assertFalse(self.m.is_sent("9515320"))
+        self.assertIsNone(self.m.get_wave("m1"))
+
+    def test_mission_needs_signature_stable(self):
+        a = {"vehicles": [{"name": "Firetruck", "count": 2}, {"name": "Police Car", "count": 1}],
+             "water_needed": 4000, "foam_needed": 0, "patients": 1, "crashed_cars": 0}
+        b = {"vehicles": [{"name": "Police Car", "count": 1}, {"name": "Firetruck", "count": 2}],
+             "water_needed": 4000, "foam_needed": 0, "patients": 1, "crashed_cars": 0}
+        self.assertEqual(_mission_needs_signature(a), _mission_needs_signature(b))
+        c = dict(b, water_needed=5000)
+        self.assertNotEqual(_mission_needs_signature(a), _mission_needs_signature(c))
+
+
+class TestTrainingGate(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.vm = VehicleManager(code="us")
+
+    def test_no_training_required_allows(self):
+        # Patrol car (sys 10) requires no training
+        self.assertTrue(disp._crew_qualified(self.vm, 10,
+            {"personnel": 2, "educations": []}))
+
+    def test_swat_requires_training(self):
+        # SWAT SUV (sys 26) requires SWAT Training (training.json)
+        self.assertFalse(disp._crew_qualified(self.vm, 26,
+            {"personnel": 2, "educations": ["EMS"]}))
+        self.assertTrue(disp._crew_qualified(self.vm, 26,
+            {"personnel": 2, "educations": ["SWAT Training"]}))
+
+    def test_fail_open_without_crew_data(self):
+        self.assertTrue(disp._crew_qualified(self.vm, 26, None))
+        self.assertTrue(disp._crew_qualified(self.vm, 26, {"personnel": 0, "educations": []}))
 
 
 if __name__ == "__main__":
