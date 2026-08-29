@@ -674,11 +674,57 @@ async def navigate_and_dispatch(browsers):
             max_disp = get_max_dispatch_distance()
         except Exception:
             max_disp = 0
+        # Upstream trailer eligibility (strict pairing): a trailer is only a
+        # solver candidate when a qualified towing vehicle exists in its own
+        # station (fms 1/2, unlocked, crew trained if require_training).
+        excluded_trailers = set()
+        try:
+            strict_pairing_pre = get_strict_trailer_pairing()
+        except Exception:
+            strict_pairing_pre = True
+        if strict_pairing_pre:
+            trailer_candidate_vids = []
+            for cb in available_vehicles_elements:
+                try:
+                    v_id = await cb.get_attribute("value")
+                    if not v_id:
+                        continue
+                    sys_id = USER_TO_SYSTEM_MAP.get(str(v_id))
+                    if not sys_id:
+                        continue
+                    try:
+                        is_trailer = VEHICLE_MANAGER.is_trailer(sys_id) if hasattr(VEHICLE_MANAGER, 'is_trailer') else sys_id in TRAILER_IDS
+                    except Exception:
+                        is_trailer = sys_id in TRAILER_IDS
+                    if is_trailer:
+                        trailer_candidate_vids.append((v_id, sys_id))
+                except Exception:
+                    continue
+            if trailer_candidate_vids:
+                tower_pool = await _build_tower_pool(available_vehicles_elements)
+                for tv_id, tv_sys in trailer_candidate_vids:
+                    try:
+                        tv_cb = await page.query_selector(f'input.vehicle_checkbox[value="{tv_id}"]')
+                        tv_bid = (await tv_cb.get_attribute("building_id")) or "" if tv_cb else ""
+                    except Exception:
+                        tv_bid = ""
+                    try:
+                        towing_ids = VEHICLE_MANAGER.get_towing_vehicles(tv_sys) if hasattr(VEHICLE_MANAGER, 'get_towing_vehicles') else []
+                    except Exception:
+                        towing_ids = []
+                    eligible = trailer_local_towers(tv_bid, towing_ids, tower_pool,
+                                                    require_training=require_training,
+                                                    trained_map=trained_map)
+                    if not eligible:
+                        excluded_trailers.add(tv_id)
+                        display_warning(f"⛔ Trailer {tv_id} (type {tv_sys}, station {tv_bid or '?'}) excluded: no qualified local towing vehicle")
         avail_sorted = []  # (cb, v_id, sys_id, dist, water, foam, crew)
         for cb in available_vehicles_elements:
             try:
                 v_id = await cb.get_attribute("value")
                 if not v_id:
+                    continue
+                if v_id in excluded_trailers:
                     continue
                 d = dist_map.get(v_id, float('inf'))
                 if not within_dispatch_radius(d, max_disp):
@@ -919,6 +965,13 @@ async def navigate_and_dispatch(browsers):
                                 tower_bid = ""
                             if not _same_station(trailer_bid, tower_bid):
                                 continue
+                        # Tractor must be available (fms 1/2)
+                        try:
+                            tower_fms = (await cb.get_attribute("fms")) or ""
+                        except Exception:
+                            tower_fms = ""
+                        if str(tower_fms).strip() and str(tower_fms).strip() not in ("1", "2"):
+                            continue
                         # Check if sys_id is in towing_ids (if defined) or is not a trailer
                         is_tower = False
                         if towing_ids:
@@ -930,10 +983,18 @@ async def navigate_and_dispatch(browsers):
                             except Exception:
                                 is_tower = sys_id not in TRAILER_IDS
                         if is_tower:
-                            # Training check: towing vehicle must have Truck License etc. if required
+                            # Training gate: tractor crew must hold the required course
+                            # (e.g. Truck Driver's License) when require_training is on.
+                            if require_training and not trained_map.get(str(vid), True):
+                                try:
+                                    req_train = VEHICLE_MANAGER.get_required_training(sys_id) if hasattr(VEHICLE_MANAGER, 'get_required_training') else []
+                                except Exception:
+                                    req_train = []
+                                display_warning(f"Towing vehicle {vid} skipped: crew not trained ({req_train})")
+                                continue
                             try:
                                 req_train = VEHICLE_MANAGER.get_required_training(sys_id) if hasattr(VEHICLE_MANAGER, 'get_required_training') else []
-                                if req_train:
+                                if req_train and not require_training:
                                     display_warning(f"Towing vehicle {vid} requires training {req_train} — ensure crew trained")
                             except Exception:
                                 pass
@@ -1200,6 +1261,61 @@ def _same_station(bid_a, bid_b) -> bool:
     if not a or not b:
         return False
     return bool(a & b)
+
+def trailer_local_towers(trailer_bid, towing_ids, tower_pool,
+                         require_training=False, trained_map=None):
+    """Eligible towing vehicles for a trailer (pure, testable).
+
+    Rules: same station (composite building_id), fms 1/2, not checked/locked,
+    type in towing_ids (when defined), crew qualified (when require_training).
+    tower_pool entries: {vid, sys_id, building_id, fms, checked, locked}.
+    """
+    out = []
+    for t in tower_pool:
+        if t.get("checked") or t.get("locked"):
+            continue
+        if str(t.get("fms", "")).strip() not in ("1", "2"):
+            continue
+        if not _same_station(trailer_bid, t.get("building_id", "")):
+            continue
+        sys_id = t.get("sys_id")
+        if towing_ids and sys_id not in towing_ids:
+            continue
+        if require_training and trained_map is not None and not trained_map.get(str(t.get("vid")), True):
+            continue
+        out.append(t)
+    return out
+
+async def _build_tower_pool(checkboxes):
+    """Read (value, sys_id, building_id, fms, checked, locked) for every
+    non-trailer checkbox — one pass, used by trailer eligibility checks."""
+    pool = []
+    for cb in checkboxes:
+        try:
+            v_id = await cb.get_attribute("value")
+            if not v_id:
+                continue
+            sys_id = USER_TO_SYSTEM_MAP.get(str(v_id))
+            if not sys_id:
+                continue
+            try:
+                is_trailer = VEHICLE_MANAGER.is_trailer(sys_id) if hasattr(VEHICLE_MANAGER, 'is_trailer') else sys_id in TRAILER_IDS
+            except Exception:
+                is_trailer = sys_id in TRAILER_IDS
+            if is_trailer:
+                continue
+            bid = (await cb.get_attribute("building_id")) or ""
+            fms = (await cb.get_attribute("fms")) or ""
+            try:
+                checked = await cb.is_checked()
+            except Exception:
+                checked = False
+            pool.append({"vid": v_id, "sys_id": sys_id, "building_id": bid,
+                         "fms": fms, "checked": checked,
+                         "locked": is_vehicle_locked(v_id)})
+        except Exception:
+            continue
+    return pool
 
 def _crew_qualified(vm, sys_id, crew_entry) -> bool:
     """Training gate: True if the vehicle needs no training or its assigned

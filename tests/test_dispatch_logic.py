@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils.vehicle_manager import VehicleManager
 from utils.dispatch_solver import solve as solve_dispatch
+from utils.dispatch_solver import prioritize_requirements_by_scarcity
 from utils.vehicle_lock import VehicleLockManager
 from utils.api_client import backoff_delay
 import utils.dispatcher as disp
@@ -25,6 +26,7 @@ from utils.dispatcher import (
     _mission_needs_signature,
     _same_station,
     within_dispatch_radius,
+    trailer_local_towers,
 )
 
 
@@ -332,6 +334,101 @@ class TestTrainingGate(unittest.TestCase):
         self.assertTrue(disp._crew_qualified(self.vm, 26, None))
         self.assertTrue(disp._crew_qualified(self.vm, 26, {"personnel": 0, "educations": []}))
 
+    def test_tractor_requires_truck_license(self):
+        # Crew Cab Semi (sys 41) requires Truck Driver's License (training.json)
+        self.assertFalse(disp._crew_qualified(self.vm, 41,
+            {"personnel": 2, "educations": ["EMS"]}))
+        self.assertTrue(disp._crew_qualified(self.vm, 41,
+            {"personnel": 2, "educations": ["Truck Driver's License"]}))
+
+
+class TestScarcityRarity(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.vm = VehicleManager(code="us")
+
+    def test_prioritize_requirements_by_scarcity(self):
+        remaining = {"Firetruck": 2, "HazMat": 1}
+        valid = {"Firetruck": {"a", "b", "c"}, "HazMat": {"z"}}
+        avail = [("a", 0, 0, 0, 0, 0, 0), ("b", 0, 0, 0, 0, 0, 0),
+                 ("c", 0, 0, 0, 0, 0, 0), ("z", 9, 0, 0, 0, 0, 0)]
+        order = prioritize_requirements_by_scarcity(remaining, valid, avail)
+        self.assertEqual(order[0][0], "HazMat", "scarcest requirement first")
+        self.assertEqual(order[1][0], "Firetruck")
+
+    def test_rarity_targets_scarce_requirement(self):
+        # 1 Rescue Engine (18) + 2 plain engines; mission needs Engine + Heavy Rescue.
+        # The only Heavy Rescue provider must target the scarce slot,
+        # not be burned on the generic Engine slot.
+        reqs = {"Firetruck": 1, "Heavy Rescue Vehicle": 1}
+        valid = {
+            "Firetruck": {"re1", "e1", "e2"},
+            "Heavy Rescue Vehicle": {"re1"},
+        }
+        avail = [
+            ("re1", 18, float("inf"), 0, 750, 0, 0),
+            ("e1", 1, float("inf"), 0, 0, 0, 0),
+            ("e2", 1, float("inf"), 0, 0, 0, 0),
+        ]
+        steps, rem, _ = solve_dispatch(self.vm, dict(reqs), valid, avail)
+        self.assertTrue(all(c == 0 for c in rem.values()))
+        re_step = next(s for s in steps if s[0] == "re1")
+        self.assertEqual(re_step[1], "Heavy Rescue Vehicle",
+                         "Rescue Engine must target the scarce Heavy Rescue slot")
+        self.assertLessEqual(len(steps), sum(reqs.values()))
+
+    def test_rarity_non_regression_quint(self):
+        # Non-régression multi-role: Quint covers Engine + Ladder alone
+        reqs = {"Firetruck": 1, "Platform Truck": 1}
+        valid = {
+            "Firetruck": {"q1", "e1"},
+            "Platform Truck": {"q1"},
+        }
+        avail = [
+            ("q1", 13, float("inf"), 0, 500, 0, 0),
+            ("e1", 1, float("inf"), 0, 0, 0, 0),
+        ]
+        steps, rem, _ = solve_dispatch(self.vm, dict(reqs), valid, avail)
+        self.assertTrue(all(c == 0 for c in rem.values()))
+        self.assertEqual(len(steps), 1, "Quint covers both roles — no extra vehicle")
+
+
+class TestTrailerEligibility(unittest.TestCase):
+    def _pool(self, **overrides):
+        entry = {"vid": "t1", "sys_id": 41, "building_id": "111_222",
+                 "fms": "2", "checked": False, "locked": False}
+        entry.update(overrides)
+        return [entry]
+
+    def test_local_tower_required(self):
+        pool = self._pool() + [
+            {"vid": "t2", "sys_id": 41, "building_id": "999", "fms": "2",
+             "checked": False, "locked": False},
+        ]
+        towers = trailer_local_towers("111_222", [41], pool)
+        self.assertEqual([t["vid"] for t in towers], ["t1"])
+
+    def test_tower_fms_must_be_available(self):
+        self.assertEqual(trailer_local_towers("111_222", [41], self._pool(fms="3")), [])
+        self.assertEqual(trailer_local_towers("111_222", [41], self._pool(fms="2")), self._pool())
+
+    def test_tower_locked_or_checked_skipped(self):
+        self.assertEqual(trailer_local_towers("111_222", [41], self._pool(checked=True)), [])
+        self.assertEqual(trailer_local_towers("111_222", [41], self._pool(locked=True)), [])
+
+    def test_tower_training_gate(self):
+        pool = self._pool()
+        trained = {"t1": False}
+        self.assertEqual(
+            trailer_local_towers("111_222", [41], pool, require_training=True, trained_map=trained), [])
+        self.assertEqual(len(trailer_local_towers("111_222", [41], pool, require_training=False)), 1)
+        trained_ok = {"t1": True}
+        self.assertEqual(
+            len(trailer_local_towers("111_222", [41], pool, require_training=True, trained_map=trained_ok)), 1)
+
+    def test_tower_wrong_type_excluded(self):
+        self.assertEqual(trailer_local_towers("111_222", [41], self._pool(sys_id=10)), [])
+
 
 class TestRadiusAndStation(unittest.TestCase):
     def test_radius_gate(self):
@@ -365,12 +462,14 @@ class TestApiBackoff(unittest.TestCase):
 class TestMissionMeta(unittest.TestCase):
     def setUp(self):
         import utils.mission_data as md
+        self._tmpdir = tempfile.TemporaryDirectory()
         self._orig = md.MISSION_META_PATH
-        md.MISSION_META_PATH = Path(tempfile.TemporaryDirectory().name) / "mission_meta.json"
+        md.MISSION_META_PATH = Path(self._tmpdir.name) / "mission_meta.json"
 
     def tearDown(self):
         import utils.mission_data as md
         md.MISSION_META_PATH = self._orig
+        self._tmpdir.cleanup()
 
     def test_first_seen_and_age(self):
         import time
