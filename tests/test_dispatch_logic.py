@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from utils.vehicle_manager import VehicleManager
 from utils.dispatch_solver import solve as solve_dispatch
 from utils.vehicle_lock import VehicleLockManager
+from utils.api_client import backoff_delay
 import utils.dispatcher as disp
 from utils.dispatcher import (
     greedy_plan,
@@ -22,6 +23,8 @@ from utils.dispatcher import (
     load_vehicle_data,
     get_valid_ids_for_type,
     _mission_needs_signature,
+    _same_station,
+    within_dispatch_radius,
 )
 
 
@@ -328,6 +331,62 @@ class TestTrainingGate(unittest.TestCase):
     def test_fail_open_without_crew_data(self):
         self.assertTrue(disp._crew_qualified(self.vm, 26, None))
         self.assertTrue(disp._crew_qualified(self.vm, 26, {"personnel": 0, "educations": []}))
+
+
+class TestRadiusAndStation(unittest.TestCase):
+    def test_radius_gate(self):
+        self.assertTrue(within_dispatch_radius(5.0, 0))
+        self.assertTrue(within_dispatch_radius(5.0, 10))
+        self.assertFalse(within_dispatch_radius(15.0, 10))
+        self.assertTrue(within_dispatch_radius(float("inf"), 10))
+
+    def test_same_station_composite_ids(self):
+        # checkbox building_id can be composite '111111_222222'
+        self.assertTrue(_same_station("111111_222222", "111111"))
+        self.assertTrue(_same_station("111111_222222", "222222_999"))
+        self.assertFalse(_same_station("111111_222222", "777"))
+        self.assertFalse(_same_station("", "111111"))
+        self.assertFalse(_same_station("", ""))
+
+
+class TestApiBackoff(unittest.TestCase):
+    def test_backoff_exponential(self):
+        self.assertAlmostEqual(backoff_delay(1, 1.5), 1.5)
+        self.assertAlmostEqual(backoff_delay(2, 1.5), 2.25)
+        self.assertAlmostEqual(backoff_delay(3, 2.0), 8.0)
+
+    def test_backoff_retry_after_takes_precedence(self):
+        self.assertEqual(backoff_delay(1, 1.5, retry_after="4"), 4.0)
+        self.assertEqual(backoff_delay(1, 1.5, retry_after="0"), 0.0)
+        self.assertEqual(backoff_delay(1, 1.5, retry_after=None), 1.5)
+        self.assertEqual(backoff_delay(1, 1.5, retry_after="bogus"), 1.5)
+
+
+class TestMissionMeta(unittest.TestCase):
+    def setUp(self):
+        import utils.mission_data as md
+        self._orig = md.MISSION_META_PATH
+        md.MISSION_META_PATH = Path(tempfile.TemporaryDirectory().name) / "mission_meta.json"
+
+    def tearDown(self):
+        import utils.mission_data as md
+        md.MISSION_META_PATH = self._orig
+
+    def test_first_seen_and_age(self):
+        import time
+        import utils.mission_data as md
+        md.MISSION_META_PATH.parent.mkdir(parents=True, exist_ok=True)
+        md.update_mission_meta(["111111"])
+        age = md.get_mission_age("111111")
+        self.assertIsNotNone(age)
+        self.assertGreaterEqual(age, 0)
+        self.assertLess(age, 5)
+        self.assertIsNone(md.get_mission_age("424242"))
+        # second update must NOT reset first_seen
+        first = md.load_mission_meta()["111111"]["first_seen"]
+        time.sleep(0.05)
+        md.update_mission_meta(["111111"])
+        self.assertEqual(md.load_mission_meta()["111111"]["first_seen"], first)
 
 
 if __name__ == "__main__":
