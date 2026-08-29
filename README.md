@@ -202,6 +202,11 @@ The dispatch core was rebuilt to eliminate over-dispatching and wrong dispatchin
 * **Unified mission delta** (`extract_missing_requirements`) : single helper computing `R_missing = required − (on scene + driving + locally locked/sent)` — used by both the mission scrape and the live dispatch re-read, so alliance vehicles and the bot's own in-flight dispatches are always deducted before solving.
 * **MRV scarcity solver** : requirements with the fewest candidate providers are resolved first; the only Rescue Engine targets the scarce Heavy Rescue slot instead of a generic Engine slot.
 * **Capability bitmasks** : per-vehicle capability masks derived from `multi_role.json` + `.mscv` at load (no hardcoded ids) — fallback resolution for unknown requirement names, multi-server safe.
+* **Game-signal dispatch gate** : the red window is the only missing-vehicles signal (chance requirements the game never rolled are no longer re-sent from the template); opt-in `fallback_dispatch` restores template subtraction.
+* **Education-aware personnel** : mission personnel needs (`8x HazMat`, `40x Hotshot`) are matched against each crew's actual courses — not headcount — when `require_personnel_education` is on.
+* **Alliance credit-only mode** : `alliance_mode = credit_only` sends a single nearest eligible unit for credits instead of solving the whole alliance mission.
+* **Per-class dispatch radius** : `radius_by_class` (e.g. `police:15,ambulance:15,fire:35,heavy:60`) overrides the global `max_dispatch_distance` per vehicle class.
+* **Strict crew gate** : `strict_crew` blocks specialized vehicles whose crew is unknown/absent instead of failing open.
 
 ### ✅ Completed Features
 
