@@ -11,9 +11,34 @@ DATA_PATH = PROJECT_ROOT / "data" / "building_data.json"
 
 async def gather_building_data(browsers, num_threads=1):
     """Gather building expansions and levels. Stores data/building_data.json.
-    Lightweight: only building id, type, level, expansions list. Used for future gating.
+    API v2 first (extensions + availability flags), DOM fallback.
     """
     display_info("Gathering building data...")
+    # --- API path (api_mode auto | api_v2) ---
+    api_mode = "dom"
+    try:
+        from data.config_settings import get_api_mode
+        api_mode = get_api_mode()
+    except Exception:
+        api_mode = "dom"
+    if api_mode in ("auto", "api_v2"):
+        try:
+            from utils.api_client import fetch_buildings, buildings_to_local
+            page = browsers[0].contexts[0].pages[0]
+            api_buildings = await fetch_buildings(page)
+            if api_buildings:
+                data = buildings_to_local(api_buildings)
+                _save_building_data(data)
+                display_info(f"Building data via API: {len(data)} entries")
+                return data
+            raise RuntimeError("API buildings empty")
+        except Exception as e:
+            if api_mode == "api_v2":
+                display_error(f"API buildings failed ({e}) — strict mode, skipping")
+                return {}
+            display_warning(f"API buildings failed ({e}) — DOM fallback")
+
+    # --- DOM fallback path ---
     try:
         page = browsers[0].contexts[0].pages[0]
         base = get_server_url().rstrip("/")
@@ -127,11 +152,7 @@ async def gather_building_data(browsers, num_threads=1):
                     display_warning(f"Building {bid} check failed: {e}")
                     continue
         # Save atomically
-        os.makedirs(DATA_PATH.parent, exist_ok=True)
-        tmp = str(DATA_PATH) + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        os.replace(tmp, str(DATA_PATH))
+        _save_building_data(data)
         display_info(f"Building data saved: {len(data)} entries")
         return data
     except asyncio.CancelledError:
@@ -139,6 +160,14 @@ async def gather_building_data(browsers, num_threads=1):
     except Exception as e:
         display_error(f"Building data gather failed: {e}")
         return {}
+
+
+def _save_building_data(data):
+    os.makedirs(DATA_PATH.parent, exist_ok=True)
+    tmp = str(DATA_PATH) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, str(DATA_PATH))
 
 def load_building_data():
     if DATA_PATH.exists():
