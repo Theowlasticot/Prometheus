@@ -40,6 +40,36 @@ def _pick_nearest(candidates):
             best = el
     return best, best_d if best else float('inf')
 
+# Vehicle types that transport patients to hospitals (ambulances etc.)
+AMBULANCE_TYPES = {5, 11, 20, 48, 49, 50}
+
+_TYPE_MAP_CACHE = None
+
+def _vehicle_type_map():
+    """{vehicle_id: system_type_id} from data/vehicle_data.json (cached)."""
+    global _TYPE_MAP_CACHE
+    if _TYPE_MAP_CACHE is None:
+        m = {}
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            path = _Path(__file__).resolve().parent.parent / "data" / "vehicle_data.json"
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            for sys_id, vids in data.items():
+                for vid in vids:
+                    m[str(vid)] = int(sys_id)
+        except Exception:
+            m = {}
+        _TYPE_MAP_CACHE = m
+    return _TYPE_MAP_CACHE
+
+def _is_transport_link(href):
+    """Real transport action links point to /patient/ (hospital) or /gefangener|prisoner/ (cell)."""
+    if not href:
+        return False
+    h = href.lower()
+    return ("/patient/" in h) or ("/gefangener/" in h) or ("/prisoner/" in h)
+
 async def handle_transport_requests(browser):
     try:
         page = browser.contexts[0].pages[0]
@@ -99,12 +129,17 @@ async def handle_transport_requests(browser):
                 continue
 
         for vehicle_url in vehicle_urls:
+            vehicle_id = vehicle_url.rstrip("/").split("/")[-1]
             try:
                 await page.goto(vehicle_url, timeout=30000)
                 await page.wait_for_load_state('domcontentloaded', timeout=15000)
-                # Wait for hospital/cell tables to load via AJAX (up to 4s)
+                # Wait for hospital/cell tables only — generic btn-success matches
+                # nav/filter buttons and made us skip the real transport UI.
                 try:
-                    await page.wait_for_selector('table#own-hospitals, table#alliance-hospitals, table#alliance-cells, a.btn.btn-success', timeout=4000)
+                    await page.wait_for_selector(
+                        'table#own-hospitals, table#alliance-hospitals, table#alliance-cells, table#own-cells',
+                        timeout=4000
+                    )
                 except Exception:
                     await page.wait_for_timeout(600)
                 await human_sleep(0.35, 0.5)
@@ -113,6 +148,19 @@ async def handle_transport_requests(browser):
             except Exception as e:
                 display_error(f"Transport: failed to load {vehicle_url}: {e}")
                 continue
+
+            # Vehicle type: ambulances transport to hospitals only; police etc. to cells.
+            sys_id = _vehicle_type_map().get(vehicle_id)
+            is_ambulance = sys_id in AMBULANCE_TYPES
+
+            # Detect page error state (Loading.../Error) — skip, next loop retries
+            try:
+                error_alert = await page.query_selector('div.alert:has-text("Error")')
+                if error_alert and not await page.query_selector('table#own-hospitals, table#alliance-hospitals, table#alliance-cells, table#own-cells'):
+                    display_warning(f"Transport: page error/loading for {vehicle_id} — skip this round")
+                    continue
+            except Exception:
+                pass
 
             # Smart hospital/cell selection with beds, alliance toggle, max distance
             hospitals_tables = []
@@ -218,14 +266,21 @@ async def handle_transport_requests(browser):
                 except Exception as e:
                     display_error(f"Hospital transport error: {e}")
             else:
-                # Patrol / cell fallback: look for any success buttons with Distance
+                # No hospital tables: ambulances have nothing else to do here
+                # (their page errored or the request was already handled).
+                if is_ambulance:
+                    display_warning(f"Transport: no hospital table for ambulance {vehicle_id} — skip this round")
+                    continue
+                # Patrol / cell fallback for police vehicles: only real transport
+                # links (/gefangener/, /prisoner/, /patient/), never nav/filter buttons.
                 try:
                     patrol_buttons = await page.query_selector_all('a.btn.btn-success')
-                    display_info(f"Found {len(patrol_buttons)} patrol transport buttons")
-
                     candidates = []
                     for button in patrol_buttons:
                         try:
+                            href = await button.get_attribute('href') or ""
+                            if not _is_transport_link(href):
+                                continue
                             button_text = await button.inner_text()
                             # i18n: Distance / Entfernung / Afstand
                             distance_text = button_text
@@ -242,6 +297,7 @@ async def handle_transport_requests(browser):
                             candidates.append((distance_value, button))
                         except Exception:
                             continue
+                    display_info(f"Found {len(candidates)} cell transport buttons for {vehicle_id}")
 
                     transport_button_to_click, smallest_distance = _pick_nearest(candidates)
                     if transport_button_to_click:
