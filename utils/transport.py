@@ -3,7 +3,7 @@ import asyncio
 import random
 
 from utils.pretty_print import display_info, display_error, display_warning
-from data.config_settings import get_server_url, get_allow_alliance_hospitals, get_allow_alliance_cells, get_max_distance
+from data.config_settings import get_server_url, get_allow_alliance_hospitals, get_allow_alliance_cells, get_max_distance, get_alliance_max_tax
 from utils.humanize import human_sleep, human_click, random_mouse_jitter
 
 def _parse_distance(text):
@@ -55,7 +55,10 @@ def _vehicle_type_map():
             from pathlib import Path as _Path
             path = _Path(__file__).resolve().parent.parent / "data" / "vehicle_data.json"
             data = _json.loads(path.read_text(encoding="utf-8"))
-            for sys_id, vids in data.items():
+            by_type = data.get("by_type") or {
+                k: v for k, v in data.items() if k not in ("by_type", "crew")
+            }
+            for sys_id, vids in by_type.items():
                 for vid in vids:
                     m[str(vid)] = int(sys_id)
         except Exception:
@@ -168,38 +171,40 @@ async def handle_transport_requests(browser):
                 allow_alliance_hosp = get_allow_alliance_hospitals()
                 allow_alliance_cells = get_allow_alliance_cells()
                 max_dist = get_max_distance()
+                max_tax = get_alliance_max_tax()
             except Exception:
                 allow_alliance_hosp = True
                 allow_alliance_cells = True
                 max_dist = 0
+                max_tax = 0
             # Always check own; alliance only if allowed
             for sel in ['table#own-hospitals']:
                 try:
                     if await page.query_selector(sel):
-                        hospitals_tables.append(sel)
+                        hospitals_tables.append((sel, "own"))
                 except Exception:
                     continue
             if allow_alliance_hosp or allow_alliance_cells:
                 for sel in ['table#alliance-hospitals', 'table#alliance-cells', 'table#own-hospitals-alliance', 'table#alliance_hospitals', 'table#alliance_hospital']:
                     try:
                         if await page.query_selector(sel):
-                            hospitals_tables.append(sel)
+                            hospitals_tables.append((sel, "alliance"))
                     except Exception:
                         continue
             if hospitals_tables:
                 try:
                     all_hospitals = []
-                    for tbl in hospitals_tables:
+                    for tbl, kind in hospitals_tables:
                         try:
                             rows = await page.query_selector_all(f'{tbl} tbody tr')
                             for r in rows:
-                                all_hospitals.append(r)
+                                all_hospitals.append((kind, r))
                         except Exception:
                             continue
-                    display_info(f"Found {len(all_hospitals)} hospitals/cells (tables: {', '.join(hospitals_tables)})")
+                    display_info(f"Found {len(all_hospitals)} hospitals/cells (tables: {', '.join(t for t, _ in hospitals_tables)})")
 
                     candidates = []
-                    for hospital in all_hospitals:
+                    for kind, hospital in all_hospitals:
                         try:
                             distance_element = await hospital.query_selector('td:nth-child(2)')
                             if not distance_element:
@@ -217,6 +222,16 @@ async def handle_transport_requests(browser):
                             dept_no = await hospital.query_selector('span.label-warning')
                             if dept_no and not dept_yes:
                                 continue
+                            # Alliance tax threshold: alliance rows carry a '10 %' cell
+                            # (own tables have no TAX column — column 4 is Department).
+                            if kind == "alliance" and max_tax and max_tax > 0:
+                                tax_el = await hospital.query_selector('td:nth-child(4)')
+                                if tax_el:
+                                    tax_text = (await tax_el.inner_text()).strip()
+                                    m_tax = re.search(r'(\d+)\s*%', tax_text)
+                                    if m_tax and int(m_tax.group(1)) > max_tax:
+                                        display_info(f"Skipping alliance destination (tax {m_tax.group(1)}% > {max_tax}%)")
+                                        continue
                             # Check free beds — i18n: look for td containing "/" or "free"
                             free_beds = None
                             try:
@@ -240,6 +255,27 @@ async def handle_transport_requests(browser):
                                     is_disabled = await transport_button.get_attribute("disabled")
                                     if is_disabled:
                                         continue
+                                except Exception:
+                                    pass
+                            # Extension availability: skip buildings whose required
+                            # extension is still under construction (available=false)
+                            if transport_button:
+                                try:
+                                    href = await transport_button.get_attribute("href") or ""
+                                    m_bid = re.search(r'/(?:patient|gefangener|prisoner)/(\d+)', href)
+                                    if m_bid:
+                                        bid = m_bid.group(1)
+                                        try:
+                                            from utils.building_data import load_building_data
+                                            bdata = load_building_data()
+                                            info = bdata.get(bid)
+                                            if info:
+                                                exts = info.get("extensions") or []
+                                                if exts and not any(e.get("available") for e in exts):
+                                                    display_info(f"Skipping destination {bid}: extensions not available yet")
+                                                    continue
+                                        except Exception:
+                                            pass
                                 except Exception:
                                     pass
                             if transport_button:
