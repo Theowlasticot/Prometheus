@@ -513,11 +513,22 @@ async def navigate_and_dispatch(browsers):
             satisfiable_reqs = [r for r, cnt in remaining.items() if cnt > 0 and v_id in valid_per_req.get(r, set())]
             if not satisfiable_reqs:
                 continue
-            # For vehicles that satisfy multiple, pick the one with highest remaining count
-            # Choose the req with most remaining to decrement
-            target_req = max(satisfiable_reqs, key=lambda r: remaining[r])
-            # SMART QUANTITY LOGIC: check if this sys_id has special quantity rule for that req
             sys_id = USER_TO_SYSTEM_MAP.get(str(v_id))
+            # Exact-type preference: pick the requirement matching the vehicle's own
+            # role name first (e.g. MCV fills 'Mobile Command Vehicle' before BCU).
+            target_req = max(satisfiable_reqs, key=lambda r: remaining[r])
+            try:
+                if sys_id:
+                    prim = VEHICLE_MANAGER.primary_name(sys_id)
+                    if prim:
+                        prim_norm = VEHICLE_MANAGER.normalize(prim)
+                        for r in satisfiable_reqs:
+                            if VEHICLE_MANAGER.normalize(r) == prim_norm:
+                                target_req = r
+                                break
+            except Exception:
+                pass
+            # SMART QUANTITY LOGIC: check if this sys_id has special quantity rule for that req
             current_target = remaining[target_req]
             if sys_id:
                 # Check if this vehicle type has a regex quantity rule for this requirement
@@ -541,9 +552,15 @@ async def navigate_and_dispatch(browsers):
                 f = 0
             current_water += w
             current_foam += f
-            # Decrement all satisfiable reqs that still need vehicles (multi-role counts for all)
-            # If vehicle can satisfy >=2 remaining requirements, treat as multi-role and count for all
-            if len(satisfiable_reqs) >= 2:
+            # Multi-role collapse ONLY for vehicles declared in multi_role.json
+            # (Quint, Rescue Engine, Pumper-Tanker...). Category overlaps like
+            # MCV->BCU are not multi-role: MCV fills MCV slots only.
+            is_multi = False
+            try:
+                is_multi = bool(sys_id and VEHICLE_MANAGER.is_true_multi_role(sys_id))
+            except Exception:
+                is_multi = False
+            if is_multi and len(satisfiable_reqs) >= 2:
                 for r in satisfiable_reqs:
                     if remaining[r] > 0:
                         remaining[r] -= 1

@@ -255,7 +255,8 @@ class VehicleManager:
                     # Store Properties
                     self.vehicle_properties[vehicle_id] = {
                         "extend": sanitized_extends,
-                        "is_matchless": data.get('is_matchless', False)
+                        "is_matchless": data.get('is_matchless', False),
+                        "base": [self.sanitize_pattern(p) for p in data.get('pattern', {}).get('base', [])]
                     }
 
                     # Parse Base Patterns
@@ -361,6 +362,27 @@ class VehicleManager:
             vid for vid, caps in self.vehicle_capabilities.items() 
             if capability.upper() in caps
         ]
+
+    def primary_name(self, system_id):
+        """First base pattern of the mscv file — the vehicle's 'own' role name.
+
+        Used to prefer exact-type dispatch: MCV (12) lists 'Mobile Command Vehicle'
+        first (and 'Battalion chief unit' second), so it fills MCV slots before BCU.
+        """
+        props = self.vehicle_properties.get(system_id, {})
+        base = props.get("base") or []
+        return base[0] if base else None
+
+    def is_true_multi_role(self, system_id):
+        """True only for vehicles declared in multi_role.json (Quint, Rescue Engine,
+        Pumper-Tanker, etc.) — category overlaps like MCV->BCU are NOT multi-role."""
+        try:
+            for mname, minfo in self.multi_role.items():
+                if system_id in minfo.get("mscv_ids", []):
+                    return True
+        except Exception:
+            pass
+        return False
 
 def get_manager_for_code(code=None):
     """Helper to get VehicleManager for current server code (DRY for dispatcher/mission_data)."""
