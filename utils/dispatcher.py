@@ -641,18 +641,36 @@ async def navigate_and_dispatch(browsers):
             ambulance_ids = order_ambulance_ids(VEHICLE_MANAGER, await get_valid_ids_for_type("ambulance"), USER_TO_SYSTEM_MAP)
             amb_req = next((r for r in vehicle_requirements if "ambulance" in r["name"].lower()), None)
             count_to_send = amb_req["count"] if amb_req else patients_count
-            
-            ambulances_sent = 0
+
+            # Build a map vid -> checkbox so we can iterate in the ORDERED
+            # ambulance priority (pure first), not DOM order.
+            cb_map = {}
             for cb in available_vehicles_elements:
-                if ambulances_sent >= count_to_send: break
-                v_id = await cb.get_attribute("value")
-                if v_id in used_vehicle_ids or await cb.is_checked(): continue
-                
-                if v_id in ambulance_ids:
-                    await click_vehicle(page, cb)
-                    used_vehicle_ids.append(v_id)
-                    display_info(f"Selected ambulance (ID: {v_id})")
-                    ambulances_sent += 1
+                try:
+                    v_id = await cb.get_attribute("value")
+                    if v_id:
+                        cb_map[v_id] = cb
+                except Exception:
+                    continue
+            ambulances_sent = 0
+            for v_id in ambulance_ids:
+                if ambulances_sent >= count_to_send:
+                    break
+                if v_id in used_vehicle_ids:
+                    continue
+                cb = cb_map.get(v_id)
+                if cb is None:
+                    continue
+                try:
+                    if await cb.is_checked():
+                        used_vehicle_ids.append(v_id)
+                        continue
+                except Exception:
+                    pass
+                await click_vehicle(page, cb)
+                used_vehicle_ids.append(v_id)
+                display_info(f"Selected ambulance (ID: {v_id})")
+                ambulances_sent += 1
 
         # --- RESOURCES (Capability Optimized) ---
         # Seed our tally from the game's live bars: the game already counts
