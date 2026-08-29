@@ -7,7 +7,7 @@ from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import get_manager_for_code
 from data.config_settings import get_share_alliance, get_process_alliance, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits, get_two_stage, get_require_training, get_alliance_delay, get_max_dispatch_distance, get_strict_trailer_pairing
 from utils.humanize import human_sleep, random_mouse_jitter
-from utils.mission_data import parse_missing_vehicles, get_on_scene_vehicles, get_mission_age
+from utils.mission_data import parse_missing_vehicles, get_on_scene_vehicles, get_mission_age, extract_missing_requirements, pending_counts_for_mission
 from utils.building_data import load_building_data, has_expansion
 import random
 
@@ -492,14 +492,17 @@ async def navigate_and_dispatch(browsers):
                     )
                     final_needed = []
                     if tables_present:
-                        for req_name, req_count in req_total.items():
-                            if "ambulance" in req_name.lower():
-                                continue
-                            req_ids = VEHICLE_MANAGER.get_valid_ids(req_name)
-                            count_on = sum(c for t, c in on_scene.items() if t in req_ids)
-                            needed = max(0, req_count - count_on)
-                            if needed > 0:
-                                final_needed.append({"name": req_name, "count": needed})
+                        # Unified delta (R3): R_missing = required - (on scene +
+                        # driving) - (locally locked/sent vehicles)
+                        pending_counts = pending_counts_for_mission(mission_id)
+                        missing = extract_missing_requirements(
+                            req_total, on_scene, pending_counts,
+                            VEHICLE_MANAGER.get_valid_ids,
+                        )
+                        final_needed = [
+                            {"name": req_name, "count": count}
+                            for req_name, count in missing.items()
+                        ]
                     else:
                         # Fresh mission — fall back to the scrape-time needed list
                         # (scrape had its own AJAX waits; red window re-checked above).

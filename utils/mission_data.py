@@ -419,26 +419,18 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 except Exception:
                     pass
 
-            # --- 4. CALCULATE REMAINING NEEDS ---
+            # --- 4. CALCULATE REMAINING NEEDS (unified delta helper R3) ---
             vehicles_on_scene = await get_on_scene_vehicles(page)
-            final_vehicles_needed = []
-            
-            for req in raw_requirements:
-                req_name = req["name"]
-                req_count = req["count"]
-                if "ambulance" in req_name.lower(): continue
-
-                required_generic_ids = VEHICLE_MANAGER.get_valid_ids(req_name)
-                
-                count_on_scene = 0
-                for type_id, scene_count in vehicles_on_scene.items():
-                    if type_id in required_generic_ids:
-                        count_on_scene += scene_count
-                
-                needed_count = max(0, req_count - count_on_scene)
-                
-                if needed_count > 0:
-                    final_vehicles_needed.append({"name": req_name, "count": needed_count})
+            pending_counts = pending_counts_for_mission(mission_id)
+            static_reqs = {req["name"]: req["count"] for req in raw_requirements}
+            missing = extract_missing_requirements(
+                static_reqs, vehicles_on_scene, pending_counts,
+                VEHICLE_MANAGER.get_valid_ids,
+            )
+            final_vehicles_needed = [
+                {"name": req_name, "count": count}
+                for req_name, count in missing.items()
+            ]
             
             vehicles = final_vehicles_needed
             
@@ -447,7 +439,7 @@ async def gather_mission_info(mission_entries, browser, thread_id):
                 amb_on_scene = 0
                 for type_id, scene_count in vehicles_on_scene.items():
                      if type_id in amb_generic_ids:
-                         amb_on_scene += scene_count
+                          amb_on_scene += scene_count
                 needed_amb = max(0, current_patient_count - amb_on_scene)
                 if needed_amb > 0:
                      vehicles.append({"name": "ambulance", "count": needed_amb})
@@ -477,6 +469,67 @@ def remove_plural_suffix(vehicle_name):
     if parts and parts[-1].endswith('s') and not parts[-1].lower().endswith('ss') and not parts[-1].lower() == 'gas':
         parts[-1] = parts[-1][:-1]
     return ' '.join(parts)
+
+def extract_missing_requirements(static_reqs, engaged_counts, pending_counts,
+                                 get_valid_ids_fn):
+    """Unified delta computation (R3): what is still missing on a mission.
+
+    R_missing = max(0, R_required - (U_on_scene + U_driving + U_local_pending))
+
+    static_reqs: {req_name: count} — 100% base requirements
+    engaged_counts: {vehicle_type_id: count} — vehicles already on the
+        mission (at_mission + driving tables, ALL players)
+    pending_counts: {vehicle_type_id: count} — vehicles the bot locked
+        locally for this mission (in-flight dispatch latency window)
+    get_valid_ids_fn: callable(req_name) -> iterable(vehicle_type_id)
+
+    Returns {req_name: missing_count} (only needs still > 0).
+    """
+    missing = {}
+    for req_name, count in static_reqs.items():
+        if "ambulance" in str(req_name).lower():
+            continue
+        try:
+            valid_ids = set(get_valid_ids_fn(req_name))
+        except Exception:
+            valid_ids = set()
+        engaged = sum(c for t, c in (engaged_counts or {}).items() if t in valid_ids)
+        pending = sum(c for t, c in (pending_counts or {}).items() if t in valid_ids)
+        need = max(0, int(count) - engaged - pending)
+        if need > 0:
+            missing[req_name] = need
+    return missing
+
+
+def pending_counts_for_mission(mission_id):
+    """{vehicle_type_id: count} of vehicles the bot sent/locked for a mission
+    (persisted dispatch_state + in-flight locks) — covers the server's
+    status-update latency window."""
+    counts = {}
+    try:
+        from utils.vehicle_lock import LOCK_MANAGER
+        vids = set(LOCK_MANAGER.sent_vehicles_of(str(mission_id)))
+    except Exception:
+        vids = set()
+    if not vids:
+        return counts
+    try:
+        vd = json.loads((PROJECT_ROOT / 'data' / 'vehicle_data.json').read_text(encoding="utf-8"))
+        by_type = vd.get("by_type") or {
+            k: v for k, v in vd.items() if k not in ("by_type", "crew")
+        }
+        vid_to_type = {}
+        for tid, ids in by_type.items():
+            for vid in ids:
+                vid_to_type[str(vid)] = int(tid)
+    except Exception:
+        return counts
+    for vid in vids:
+        t = vid_to_type.get(str(vid))
+        if t is not None:
+            counts[t] = counts.get(t, 0) + 1
+    return counts
+
 
 def parse_missing_vehicles(text):
     """Parse the red 'Missing Vehicles' window text into (vehicles, water, foam, crashed).
