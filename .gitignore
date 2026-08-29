@@ -33,6 +33,7 @@ logs/*.jsonl
 data/vehicle_data.json
 data/mission_data.json
 data/building_data.json
+data/active_mission_ids.json
 data/*.tmp
 assets_cache/
 assets_cache/*.json

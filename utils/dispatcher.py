@@ -27,8 +27,99 @@ def free_up_vehicles(mission_id: str):
     for vid in to_free:
         del _LOCKED_VEHICLES[vid]
 
+def unlock_vehicle(vid: str):
+    _LOCKED_VEHICLES.pop(vid, None)
+
 def free_all_vehicles():
     _LOCKED_VEHICLES.clear()
+
+def greedy_plan(vehicle_manager, remaining, valid_per_req, avail):
+    """Pure greedy planner (testable offline).
+
+    remaining: {req_name: count} (net needs)
+    valid_per_req: {req_name: set(vid)}
+    avail: list of (vid, sys_id, dist, can_satisfy) — available, unlocked vehicles
+    Returns (steps, final_remaining):
+      steps: [(vid, target_req, is_multi, satisfiable_reqs)]
+    Rules (best-first, per selection):
+      - exact type wins: a vehicle whose own role name matches a remaining
+        requirement is preferred over substitutes (MCV->BCU overlap)
+      - multi-role collapse only for vehicles declared in multi_role.json
+      - then distance asc
+    """
+    steps = []
+    rem = dict(remaining)
+    cand = list(avail)
+    while any(c > 0 for c in rem.values()):
+        best = None
+        for item in cand:
+            vid, sys_id, dist, can_satisfy = item
+            satisfiable = [r for r, c in rem.items() if c > 0 and vid in valid_per_req.get(r, set())]
+            if not satisfiable:
+                continue
+            exact = 0
+            prim = None
+            try:
+                prim = vehicle_manager.primary_name(sys_id)
+            except Exception:
+                prim = None
+            if prim:
+                norm = vehicle_manager.normalize(prim)
+                if any(vehicle_manager.normalize(r) == norm for r in satisfiable):
+                    exact = 1
+            is_multi = False
+            try:
+                is_multi = bool(sys_id and vehicle_manager.is_true_multi_role(sys_id))
+            except Exception:
+                is_multi = False
+            can = len(satisfiable)
+            score = (exact, 1 if (is_multi and can >= 2) else 0, can, -dist)
+            if best is None or score > best[0]:
+                best = (score, item, satisfiable)
+        if best is None:
+            break
+        _score, (vid, sys_id, dist, can_satisfy), satisfiable = best
+        # Exact-type preference for the slot this vehicle fills
+        target_req = max(satisfiable, key=lambda r: rem[r])
+        prim = None
+        try:
+            prim = vehicle_manager.primary_name(sys_id)
+        except Exception:
+            prim = None
+        if prim:
+            norm = vehicle_manager.normalize(prim)
+            for r in satisfiable:
+                if vehicle_manager.normalize(r) == norm:
+                    target_req = r
+                    break
+        is_multi = False
+        try:
+            is_multi = bool(sys_id and vehicle_manager.is_true_multi_role(sys_id))
+        except Exception:
+            is_multi = False
+        if is_multi and len(satisfiable) >= 2:
+            for r in satisfiable:
+                if rem[r] > 0:
+                    rem[r] -= 1
+        else:
+            rem[target_req] -= 1
+        steps.append((vid, target_req, is_multi and len(satisfiable) >= 2, satisfiable))
+        cand.remove((vid, sys_id, dist, can_satisfy))
+    return steps, rem
+
+def order_ambulance_ids(vehicle_manager, ambulance_ids, user_to_system_map):
+    """Pure ambulances (types 5, 11...) first; combined vehicles
+    (EMS Fire Engine, Tactical, HazMat Ambulance) last — they must not be
+    pulled off the fire scene for transport when a pure ambulance is free."""
+    multi_sys = set()
+    try:
+        for minfo in getattr(vehicle_manager, 'multi_role', {}).values():
+            multi_sys.update(minfo.get('mscv_ids', []))
+    except Exception:
+        pass
+    pure = [v for v in ambulance_ids if user_to_system_map.get(str(v)) not in multi_sys]
+    combi = [v for v in ambulance_ids if user_to_system_map.get(str(v)) in multi_sys]
+    return pure + combi
 
 async def read_water_status(page):
     """Read the game's live water bars (at mission / driving / selected) -> (total, need).
@@ -252,11 +343,21 @@ async def navigate_and_dispatch(browsers):
 
     display_info(f"Loaded {len(sorted_missions)} missions. Processing...")
 
-    # --- Vehicle lock cleanup: free vehicles for missions no longer pending ---
+    # --- Vehicle lock cleanup: free vehicles only for missions no longer on the board ---
+    # Use active_mission_ids.json (red + yellow + green) so locks on green missions
+    # survive until the mission disappears entirely — otherwise an escalation would
+    # re-dispatch vehicles that are still driving.
     try:
-        current_ids = set(mission_data.keys())
+        active_ids = set(mission_data.keys())
+        try:
+            with open(PROJECT_ROOT / 'data' / 'active_mission_ids.json', 'r') as f:
+                board_ids = set(json.load(f))
+            if board_ids:
+                active_ids = board_ids
+        except Exception:
+            pass
         locked_mids = set(_LOCKED_VEHICLES.values())
-        stale = locked_mids - current_ids
+        stale = locked_mids - active_ids
         for mid in stale:
             free_up_vehicles(mid)
             display_info(f"Freed vehicles for completed mission {mid}")
@@ -503,39 +604,18 @@ async def navigate_and_dispatch(browsers):
                 avail_sorted.append((can_satisfy, d, cb, v_id))
             except Exception:
                 continue
-        # Sort by can_satisfy desc (multi-role first), then distance asc
-        avail_sorted.sort(key=lambda x: (-x[0], x[1]))
-        # Greedy selection: pick vehicles that satisfy the most remaining requirements
-        for can_satisfy, d, cb, v_id in avail_sorted:
-            if all(cnt <= 0 for cnt in remaining.values()):
-                break
-            # Find which requirements this vehicle can still satisfy
-            satisfiable_reqs = [r for r, cnt in remaining.items() if cnt > 0 and v_id in valid_per_req.get(r, set())]
-            if not satisfiable_reqs:
+        # Pure planner (testable offline) — decides which vehicle fills which req
+        avail_plan = [
+            (v_id, USER_TO_SYSTEM_MAP.get(str(v_id)), d, can_satisfy)
+            for can_satisfy, d, cb, v_id in avail_sorted
+        ]
+        steps, final_remaining = greedy_plan(VEHICLE_MANAGER, remaining, valid_per_req, avail_plan)
+        cb_by_vid = {v_id: cb for _, _, cb, v_id in avail_sorted}
+        # Execute the plan: click each chosen vehicle, accumulate water/foam
+        for v_id, target_req, is_multi, satisfiable_reqs in steps:
+            cb = cb_by_vid.get(v_id)
+            if cb is None:
                 continue
-            sys_id = USER_TO_SYSTEM_MAP.get(str(v_id))
-            # Exact-type preference: pick the requirement matching the vehicle's own
-            # role name first (e.g. MCV fills 'Mobile Command Vehicle' before BCU).
-            target_req = max(satisfiable_reqs, key=lambda r: remaining[r])
-            try:
-                if sys_id:
-                    prim = VEHICLE_MANAGER.primary_name(sys_id)
-                    if prim:
-                        prim_norm = VEHICLE_MANAGER.normalize(prim)
-                        for r in satisfiable_reqs:
-                            if VEHICLE_MANAGER.normalize(r) == prim_norm:
-                                target_req = r
-                                break
-            except Exception:
-                pass
-            # SMART QUANTITY LOGIC: check if this sys_id has special quantity rule for that req
-            current_target = remaining[target_req]
-            if sys_id:
-                # Check if this vehicle type has a regex quantity rule for this requirement
-                qty_rule_target = VEHICLE_MANAGER.get_required_quantity(sys_id, target_req, remaining[target_req])
-                # If rule says 1 vehicle covers N, we should not select more than needed for that req
-                # The greedy will handle it via remaining counts
-                pass
             await click_vehicle(page, cb)
             used_vehicle_ids.append(v_id)
             lock_vehicle(v_id, mission_id)
@@ -552,26 +632,15 @@ async def navigate_and_dispatch(browsers):
                 f = 0
             current_water += w
             current_foam += f
-            # Multi-role collapse ONLY for vehicles declared in multi_role.json
-            # (Quint, Rescue Engine, Pumper-Tanker...). Category overlaps like
-            # MCV->BCU are not multi-role: MCV fills MCV slots only.
-            is_multi = False
-            try:
-                is_multi = bool(sys_id and VEHICLE_MANAGER.is_true_multi_role(sys_id))
-            except Exception:
-                is_multi = False
-            if is_multi and len(satisfiable_reqs) >= 2:
-                for r in satisfiable_reqs:
-                    if remaining[r] > 0:
-                        remaining[r] -= 1
-                display_info(f"Selected MULTI-ROLE {target_req} (ID: {v_id}) covers {satisfiable_reqs} [Rem: {remaining}]")
+            if is_multi:
+                display_info(f"Selected MULTI-ROLE {target_req} (ID: {v_id}) covers {satisfiable_reqs} [Rem: {final_remaining}]")
             else:
-                remaining[target_req] -= 1
-                display_info(f"Selected {target_req} (ID: {v_id}) [Rem: {remaining[target_req]}]")
+                display_info(f"Selected {target_req} (ID: {v_id}) [Rem: {final_remaining.get(target_req, 0)}]")
+        remaining = final_remaining
 
         # --- AMBULANCES ---
         if patients_count > 0:
-            ambulance_ids = await get_valid_ids_for_type("ambulance")
+            ambulance_ids = order_ambulance_ids(VEHICLE_MANAGER, await get_valid_ids_for_type("ambulance"), USER_TO_SYSTEM_MAP)
             amb_req = next((r for r in vehicle_requirements if "ambulance" in r["name"].lower()), None)
             count_to_send = amb_req["count"] if amb_req else patients_count
             
@@ -753,7 +822,18 @@ async def navigate_and_dispatch(browsers):
                             display_info(f"Towing vehicle {vid} for trailer {trailer_vid} (trailer type {trailer_sys})")
                             break
                     if not found_for_this:
-                        display_warning(f"No towing vehicle found for trailer {trailer_vid} (type {trailer_sys}, needs {towing_ids})")
+                        # Atomic trailer rule: never dispatch a trailer without its tower.
+                        # Uncheck the trailer so the server does not reject the dispatch.
+                        display_warning(f"No towing vehicle for trailer {trailer_vid} (type {trailer_sys}) — unchecking it")
+                        try:
+                            trailer_cb = await page.query_selector(f'input.vehicle_checkbox[value="{trailer_vid}"]')
+                            if trailer_cb:
+                                await click_vehicle(page, trailer_cb)  # toggle off
+                                if trailer_vid in used_vehicle_ids:
+                                    used_vehicle_ids.remove(trailer_vid)
+                                unlock_vehicle(trailer_vid)
+                        except Exception as e:
+                            display_warning(f"Trailer uncheck failed {trailer_vid}: {e}")
                 if tow_found < len(trailer_used):
                     display_warning(f"Trailer(s) {trailer_used} may lack towing vehicle ({tow_found}/{len(trailer_used)})")
         except Exception as e:

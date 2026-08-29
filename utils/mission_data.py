@@ -67,6 +67,7 @@ async def check_and_grab_missions(browsers, num_threads):
         seen = set()
         mission_list = []
         green_skipped = 0
+        active_ids = []  # every visible mission (red + yellow + green) — for lock cleanup
         for panel in mission_panels:
             try:
                 m_id_attr = await panel.get_attribute('id')
@@ -79,6 +80,7 @@ async def check_and_grab_missions(browsers, num_threads):
                 if not clean_id.isdigit() or clean_id in seen:
                     continue
                 seen.add(clean_id)
+                active_ids.append(clean_id)
                 # Skip fully-satisfied missions (green panel = nothing missing, no escalation)
                 # Escalations turn them red again -> next loop catches them.
                 inner_green = await panel.query_selector('.mission_panel_green')
@@ -118,7 +120,15 @@ async def check_and_grab_missions(browsers, num_threads):
         with open(tmp_path, 'w') as outfile:
             json.dump(mission_data, outfile, indent=4)
         os.replace(tmp_path, final_path)
-        display_info("Mission data stored.")
+        # Active mission ids (including green) — used by the dispatcher's lock
+        # cleanup so vehicles locked on a green mission are not freed while the
+        # mission is still on the board (would cause re-dispatch on escalation).
+        active_tmp = PROJECT_ROOT / 'data' / 'active_mission_ids.json.tmp'
+        active_final = PROJECT_ROOT / 'data' / 'active_mission_ids.json'
+        with open(active_tmp, 'w') as outfile:
+            json.dump(active_ids, outfile)
+        os.replace(active_tmp, active_final)
+        display_info(f"Mission data stored ({len(active_ids)} active ids).")
         
     except Exception as e:
         display_error(f"Error gathering mission data: {e}")
