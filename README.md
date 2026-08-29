@@ -103,6 +103,7 @@ personnel_check = 3600
 [mission_settings]
 share_alliance = true
 process_alliance = true
+alliance_delay = 45  # grace period before dispatching alliance missions (0 = immediate)
 
 [server_settings]
 code = us  # 19 codes: us/uk/de/fr/nl/au/cz/dk/fi/it/pl/pt/se/no/kr/es/jp/ro/ru
@@ -124,10 +125,18 @@ use_aar = false  # experimental AAR API
 require_training = false  # only dispatch specialized vehicles with trained crew
 lock_ttl = 12  # in-flight vehicle reservation lock (seconds)
 two_stage = true  # send 100% needs only, expand at Status 4
+max_dispatch_distance = 0  # km — solver ignores candidates beyond (0 = unlimited)
+strict_trailer_pairing = true  # tractor must be in the trailer's own station
 
 [ingestion_settings]
 api_mode = auto  # auto = API v2 + DOM fallback; api_v2 = strict; dom = legacy
 crew_scrape = true  # enrich vehicle data with crew/training at refresh
+
+[api_settings]
+min_jitter_ms = 100  # humanized delay between API requests
+max_jitter_ms = 400
+max_retries = 3  # retries on 429/5xx
+backoff_factor = 1.5  # exponential backoff multiplier
 
 [mission_filter]
 ignore_storm = false
@@ -186,6 +195,10 @@ The dispatch core was rebuilt to eliminate over-dispatching and wrong dispatchin
 * **Crew training gate** (`require_training`) : `gather_vehicle_data` scrapes the crew page (`/vehicles/{id}/zuweisung`) and stores onboard personnel + course names; the solver excludes specialized vehicles whose crew lacks the required course (fail-open when data is absent).
 * **API v2 ingestion** (`api_mode = auto`) : fleet via `GET /api/v2/vehicles` with cursor pagination (no more truncated fleets), buildings via `GET /api/buildings` with extension availability flags; DOM scraping kept as automatic fallback.
 * **Transport upgrades** : alliance tax threshold (`alliance_max_tax`), extension `available` check before clicking, nearest-by-distance + free beds + department filtering, prisoner auto-release.
+* **Alliance grace period** (`alliance_delay`) : first-seen timestamps (`data/mission_meta.json`) hold off alliance-mission dispatch so allies' units land in the on-scene tables before the bot computes its differential — no doubling alliance colleagues.
+* **Trailer pairing** (`strict_trailer_pairing`) : a trailer is only dispatched with a towing vehicle from its own station (checkbox `building_id`); otherwise the trailer is unchecked (atomic rule).
+* **Dispatch radius** (`max_dispatch_distance`) : solver ignores candidates beyond N km (0 = unlimited).
+* **API hardening** (`[api_settings]`) : humanized jitter between requests, exponential backoff retries on 429/5xx (honoring `Retry-After`), Rails CSRF token + `X-Requested-With` headers on POST alarms.
 
 ### ✅ Completed Features
 
