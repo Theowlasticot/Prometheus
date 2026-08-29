@@ -65,6 +65,14 @@ def get_process_alliance():
         return config.getboolean('mission_settings', 'process_alliance')
     except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
         return True # Default to True if missing
+
+def get_alliance_delay():
+    _reload()
+    try:
+        v = config.getint('mission_settings', 'alliance_delay', fallback=45)
+        return max(0, min(3600, v))
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return 45
 def get_hiring_mode():
     _reload()
     try:
@@ -188,6 +196,53 @@ def get_two_stage():
         return config.getboolean('dispatch_settings', 'two_stage', fallback=True)
     except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
         return True
+
+def get_max_dispatch_distance():
+    _reload()
+    try:
+        v = config.getint('dispatch_settings', 'max_dispatch_distance', fallback=0)
+        return max(0, min(200, v))
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return 0
+
+def get_strict_trailer_pairing():
+    _reload()
+    try:
+        return config.getboolean('dispatch_settings', 'strict_trailer_pairing', fallback=True)
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return True
+
+def get_min_jitter_ms():
+    _reload()
+    try:
+        v = config.getint('api_settings', 'min_jitter_ms', fallback=100)
+        return max(0, min(5000, v))
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return 100
+
+def get_max_jitter_ms():
+    _reload()
+    try:
+        v = config.getint('api_settings', 'max_jitter_ms', fallback=400)
+        return max(0, min(5000, v))
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return 400
+
+def get_max_retries():
+    _reload()
+    try:
+        v = config.getint('api_settings', 'max_retries', fallback=3)
+        return max(0, min(10, v))
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return 3
+
+def get_backoff_factor():
+    _reload()
+    try:
+        v = config.getfloat('api_settings', 'backoff_factor', fallback=1.5)
+        return max(1.0, min(5.0, v))
+    except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
+        return 1.5
 
 def get_alliance_max_tax():
     _reload()

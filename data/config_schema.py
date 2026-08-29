@@ -49,6 +49,9 @@ CONFIG_SCHEMA = [
      "group": "mission", "label": "Share alliance", "help": "Auto-share missions to alliance"},
     {"section": "mission_settings", "key": "process_alliance", "type": "bool", "default": "true",
      "group": "mission", "label": "Process alliance", "help": "Include alliance missions"},
+    {"section": "mission_settings", "key": "alliance_delay", "type": "int", "default": "45",
+     "min": 0, "max": 3600, "group": "mission", "label": "Alliance delay (s)",
+     "help": "Grace period before dispatching alliance missions (lets allies respond). 0 = immediate"},
 
     # --- transport_settings ---
     {"section": "transport_settings", "key": "allow_alliance_hospitals", "type": "bool", "default": "true",
@@ -78,6 +81,12 @@ CONFIG_SCHEMA = [
     {"section": "dispatch_settings", "key": "two_stage", "type": "bool", "default": "true",
      "group": "dispatch", "label": "Two-stage dispatch",
      "help": "Send only 100% requirements; expand on scene arrival"},
+    {"section": "dispatch_settings", "key": "max_dispatch_distance", "type": "int", "default": "0",
+     "min": 0, "max": 200, "group": "dispatch", "label": "Max dispatch distance (km)",
+     "help": "Solver ignores candidates beyond this radius. 0 = unlimited"},
+    {"section": "dispatch_settings", "key": "strict_trailer_pairing", "type": "bool", "default": "true",
+     "group": "dispatch", "label": "Strict trailer pairing",
+     "help": "Require a towing vehicle in the SAME station as the trailer; uncheck otherwise"},
 
     # --- mission_filter ---
     {"section": "mission_filter", "key": "ignore_storm", "type": "bool", "default": "false",
@@ -98,6 +107,20 @@ CONFIG_SCHEMA = [
     {"section": "ingestion_settings", "key": "crew_scrape", "type": "bool", "default": "true",
      "group": "ingestion", "label": "Scrape crew data",
      "help": "Enrich vehicle data with crew/training at refresh"},
+
+    # --- api_settings (new) ---
+    {"section": "api_settings", "key": "min_jitter_ms", "type": "int", "default": "100",
+     "min": 0, "max": 5000, "group": "api", "label": "Min jitter (ms)",
+     "help": "Minimum humanized delay between API requests"},
+    {"section": "api_settings", "key": "max_jitter_ms", "type": "int", "default": "400",
+     "min": 0, "max": 5000, "group": "api", "label": "Max jitter (ms)",
+     "help": "Maximum humanized delay between API requests"},
+    {"section": "api_settings", "key": "max_retries", "type": "int", "default": "3",
+     "min": 0, "max": 10, "group": "api", "label": "Max retries",
+     "help": "Retry attempts on 429/5xx errors"},
+    {"section": "api_settings", "key": "backoff_factor", "type": "float", "default": "1.5",
+     "min": 1.0, "max": 5.0, "group": "api", "label": "Backoff factor",
+     "help": "Exponential backoff multiplier between retries"},
 ]
 
 # Ordered card groups for the dashboard Config tab
@@ -111,6 +134,7 @@ CONFIG_GROUPS = [
     ("dispatch", "Dispatch Settings", "Dispatch engine tuning"),
     ("filter", "Mission Filter", "Ignore rules"),
     ("ingestion", "Ingestion & API", "Data collection"),
+    ("api", "API & Network", "Rate limiting, retries"),
 ]
 
 SECTIONS = sorted({item["section"] for item in CONFIG_SCHEMA})
@@ -140,6 +164,18 @@ def coerce(item, value):
             v = int(raw)
         except (TypeError, ValueError):
             return False, None, f"{item['key']} must be integer"
+        lo = item.get("min")
+        hi = item.get("max")
+        if lo is not None and v < lo:
+            return False, None, f"{item['key']} must be {lo}-{hi}"
+        if hi is not None and v > hi:
+            return False, None, f"{item['key']} must be {lo}-{hi}"
+        return True, v, None
+    if t == "float":
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            return False, None, f"{item['key']} must be a number"
         lo = item.get("min")
         hi = item.get("max")
         if lo is not None and v < lo:
