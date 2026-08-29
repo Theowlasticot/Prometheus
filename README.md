@@ -116,10 +116,18 @@ server_manifest_url = https://raw.githubusercontent.com/cfHxqA/Mission-Chief.Bot
 allow_alliance_hospitals = true
 allow_alliance_cells = true
 max_distance = 0  # km, 0 = unlimited
+alliance_max_tax = 0  # % max alliance tax tolerated (0 = unlimited)
 
 [dispatch_settings]
-min_percent = 70  # 0-100
+min_percent = 100  # 0-100 — 100 recommended (two-stage handles the rest)
 use_aar = false  # experimental AAR API
+require_training = false  # only dispatch specialized vehicles with trained crew
+lock_ttl = 12  # in-flight vehicle reservation lock (seconds)
+two_stage = true  # send 100% needs only, expand at Status 4
+
+[ingestion_settings]
+api_mode = auto  # auto = API v2 + DOM fallback; api_v2 = strict; dom = legacy
+crew_scrape = true  # enrich vehicle data with crew/training at refresh
 
 [mission_filter]
 ignore_storm = false
@@ -168,16 +176,22 @@ API: `POST /api/bot/start {mode:1}`, `POST /api/bot/stop`, `GET /api/bot/status`
 
 ## 🗺️ Prometheus Development Roadmap
 
-### 🌍 The Big Next Step: International Support
+### 🏗️ V4.1 Dispatch Engine (recent)
 
-**Multi-Server Support is coming\!**
-The biggest focus for upcoming updates is breaking the US-only limitation. We are actively developing a framework to support multiple regions (UK, AU, DE, etc.) out of the box, allowing users worldwide to utilize Prometheus without complex configuration changes.
+The dispatch core was rebuilt to eliminate over-dispatching and wrong dispatching:
+
+* **`utils/dispatch_solver.py` — OptimalDispatchSolver** : unified best-first set cover solving roles, water, foam and personnel in a single pass. Multi-role collapse (Quint, Rescue Engine, Pumper-Tanker via `multi_role.json`) with exact-type preference (MCV never substitutes BCU). Water-aware: prefers water-carrying engines before sending extra tankers.
+* **`utils/vehicle_lock.py` — VehicleLockManager** : two-layer reservation — TTL in-flight lock (`lock_ttl`, covers the server's 0.5-2s status latency) + persisted sent map (`data/dispatch_state.json`, survives restarts, freed when the mission leaves the board). `unlock_on_failure` releases everything when a dispatch fails (AAR error, disabled button, page crash).
+* **Two-stage dispatch** : wave tracking per mission — phase 1 sends only the 100% guaranteed needs; identical re-evaluations are skipped while vehicles are in flight; phase 2 fires only when the live needs change (escalation → exact delta).
+* **Crew training gate** (`require_training`) : `gather_vehicle_data` scrapes the crew page (`/vehicles/{id}/zuweisung`) and stores onboard personnel + course names; the solver excludes specialized vehicles whose crew lacks the required course (fail-open when data is absent).
+* **API v2 ingestion** (`api_mode = auto`) : fleet via `GET /api/v2/vehicles` with cursor pagination (no more truncated fleets), buildings via `GET /api/buildings` with extension availability flags; DOM scraping kept as automatic fallback.
+* **Transport upgrades** : alliance tax threshold (`alliance_max_tax`), extension `available` check before clicking, nearest-by-distance + free beds + department filtering, prisoner auto-release.
 
 ### ✅ Completed Features
 
-  * **Phase 1: Personnel Management:** Fully implemented. The bot now iterates through buildings and handles hiring based on `personnel_settings`.
-  * **Smart Vehicle Logic:** "Water", "Foam", and "Personnel" counting logic is implemented via `vehicle_manager.py` and `.mscv` pattern matching.
-  * **Transport Logic:** Basic transport handling (Nearest Hospital/Cell + Prisoner Release) is active.
+* **Phase 1: Personnel Management:** Fully implemented. The bot now iterates through buildings and handles hiring based on `personnel_settings`.
+* **Smart Vehicle Logic:** "Water", "Foam", and "Personnel" counting logic is implemented via `vehicle_manager.py` and `.mscv` pattern matching.
+* **Transport Logic:** Basic transport handling (Nearest Hospital/Cell + Prisoner Release) is active.
 
 ### 🚧 Upcoming / Planned (Phase 2 & Beyond)
 
