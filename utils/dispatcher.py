@@ -5,9 +5,9 @@ from pathlib import Path
 
 from utils.pretty_print import display_info, display_error, display_warning
 from utils.vehicle_manager import get_manager_for_code
-from data.config_settings import get_share_alliance, get_process_alliance, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits, get_two_stage, get_require_training
+from data.config_settings import get_share_alliance, get_process_alliance, get_server_url, is_alliance_mission_name, get_min_percent, get_use_aar, get_ignore_storm, get_ignore_event, get_min_credits, get_two_stage, get_require_training, get_alliance_delay, get_max_dispatch_distance, get_strict_trailer_pairing
 from utils.humanize import human_sleep, random_mouse_jitter
-from utils.mission_data import parse_missing_vehicles, get_on_scene_vehicles
+from utils.mission_data import parse_missing_vehicles, get_on_scene_vehicles, get_mission_age
 from utils.building_data import load_building_data, has_expansion
 import random
 
@@ -408,6 +408,20 @@ async def navigate_and_dispatch(browsers):
             display_info(f"⏭️ Skipping Alliance Mission: {mission_name}")
             continue
 
+        # Alliance grace period: let allies send their units first so the
+        # live red window / on-scene tables include their vehicles before we
+        # compute the differential (avoids doubling alliance colleagues).
+        if is_alliance_mission:
+            try:
+                alliance_delay = get_alliance_delay()
+            except Exception:
+                alliance_delay = 45
+            if alliance_delay > 0:
+                age = get_mission_age(mission_id)
+                if age is None or age < alliance_delay:
+                    display_info(f"⏳ Alliance {mission_id} age {age if age is not None else '?'}s < {alliance_delay}s — waiting for allies")
+                    continue
+
         display_info(f"Checking mission: {mission_name} ({credits_val} Cr) (ID: {mission_id})")
 
         try:
@@ -461,8 +475,10 @@ async def navigate_and_dispatch(browsers):
         # Never open the help lightbox here: it destroys the vehicle checkbox
         # DOM (verified live: 126 cbs -> 0 after help open/close).
         # Instead use raw requirements stored by the scrape (same loop) and
-        # re-subtract the live on-scene counts (tables are on the page, no lightbox).
-        if not is_missing_mission and not is_alliance_mission:
+        # re-subtract the live on-scene counts (tables are on the page, no
+        # lightbox). Includes alliance missions: the tables list every player's
+        # vehicles (own + allied) so we never double our allies.
+        if not is_missing_mission:
             try:
                 req_total = data.get("required_total") or {}
                 if req_total:
@@ -652,7 +668,12 @@ async def navigate_and_dispatch(browsers):
                     continue
                 sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
                 trained_map[str(vid)] = _crew_qualified(VEHICLE_MANAGER, sys_id, entry)
-        # Build candidates: available, unlocked, with per-vehicle resources
+        # Build candidates: available, unlocked, within dispatch radius,
+        # with per-vehicle resources
+        try:
+            max_disp = get_max_dispatch_distance()
+        except Exception:
+            max_disp = 0
         avail_sorted = []  # (cb, v_id, sys_id, dist, water, foam, crew)
         for cb in available_vehicles_elements:
             try:
@@ -660,6 +681,8 @@ async def navigate_and_dispatch(browsers):
                 if not v_id:
                     continue
                 d = dist_map.get(v_id, float('inf'))
+                if not within_dispatch_radius(d, max_disp):
+                    continue
                 try:
                     is_checked = await cb.is_checked()
                 except Exception:
@@ -859,6 +882,10 @@ async def navigate_and_dispatch(browsers):
                 if is_trailer:
                     trailer_used.append((vid, sys_id))
             if trailer_used:
+                try:
+                    strict_pairing = get_strict_trailer_pairing()
+                except Exception:
+                    strict_pairing = True
                 # For each trailer, find specific towing vehicle from trailers.json
                 tow_found = 0
                 for trailer_vid, trailer_sys in trailer_used:
@@ -868,6 +895,13 @@ async def navigate_and_dispatch(browsers):
                             towing_ids = VEHICLE_MANAGER.get_towing_vehicles(trailer_sys)
                     except Exception:
                         towing_ids = []
+                    trailer_bid = ""
+                    try:
+                        trailer_cb = await page.query_selector(f'input.vehicle_checkbox[value="{trailer_vid}"]')
+                        if trailer_cb:
+                            trailer_bid = (await trailer_cb.get_attribute("building_id")) or ""
+                    except Exception:
+                        trailer_bid = ""
                     # Find a towing vehicle for this trailer
                     found_for_this = False
                     for cb in available_vehicles_elements:
@@ -877,6 +911,14 @@ async def navigate_and_dispatch(browsers):
                         sys_id = USER_TO_SYSTEM_MAP.get(str(vid))
                         if not sys_id:
                             continue
+                        # Strict pairing: tractor must share a station building id
+                        if strict_pairing and trailer_bid:
+                            try:
+                                tower_bid = (await cb.get_attribute("building_id")) or ""
+                            except Exception:
+                                tower_bid = ""
+                            if not _same_station(trailer_bid, tower_bid):
+                                continue
                         # Check if sys_id is in towing_ids (if defined) or is not a trailer
                         is_tower = False
                         if towing_ids:
@@ -900,12 +942,15 @@ async def navigate_and_dispatch(browsers):
                             lock_vehicle(vid, mission_id)
                             tow_found += 1
                             found_for_this = True
-                            display_info(f"Towing vehicle {vid} for trailer {trailer_vid} (trailer type {trailer_sys})")
+                            display_info(f"Towing vehicle {vid} for trailer {trailer_vid} (trailer type {trailer_sys}, station {trailer_bid or '?'})")
                             break
                     if not found_for_this:
                         # Atomic trailer rule: never dispatch a trailer without its tower.
                         # Uncheck the trailer so the server does not reject the dispatch.
-                        display_warning(f"No towing vehicle for trailer {trailer_vid} (type {trailer_sys}) — unchecking it")
+                        if strict_pairing and trailer_bid:
+                            display_warning(f"No local towing vehicle for trailer {trailer_vid} (type {trailer_sys}, station {trailer_bid}) — unchecking it")
+                        else:
+                            display_warning(f"No towing vehicle for trailer {trailer_vid} (type {trailer_sys}) — unchecking it")
                         try:
                             trailer_cb = await page.query_selector(f'input.vehicle_checkbox[value="{trailer_vid}"]')
                             if trailer_cb:
@@ -931,15 +976,21 @@ async def navigate_and_dispatch(browsers):
         # --- SEND ---
         # Try AAR API first if enabled (faster, avoids checkbox flakiness), else click button
         dispatched = False
-        if get_use_aar():
+        if get_use_aar() and used_vehicle_ids:
             try:
                 base = get_server_url().rstrip("/")
                 # Use Playwright APIRequestContext via page.request
                 # POST to /missions/{id}/alarm with vehicle_ids[]
+                # Rails CSRF + X-Requested-With headers (token from meta tag)
                 payload = {"vehicle_ids[]": used_vehicle_ids, "next_mission": "0"}
                 # page.request is available on page.context.request or page.request
                 req_ctx = page.request if hasattr(page, "request") else page.context.request
-                resp = await req_ctx.post(f"{base}/missions/{mission_id}/alarm", form=payload)
+                try:
+                    from utils.api_client import post_headers
+                    headers = await post_headers(page)
+                except Exception:
+                    headers = {}
+                resp = await req_ctx.post(f"{base}/missions/{mission_id}/alarm", form=payload, headers=headers)
                 if resp.ok:
                     display_info(f"🚀 Dispatched via AAR API {mission_id} ({len(used_vehicle_ids)} vehicles)")
                     dispatched = True
@@ -1132,6 +1183,23 @@ def _mission_needs_signature(data: dict) -> str:
         "patients": int(data.get("patients", 0) or 0),
         "crashed": int(data.get("crashed_cars", 0) or 0),
     }, sort_keys=True)
+
+def within_dispatch_radius(d, max_disp) -> bool:
+    """Radius gate: max_disp<=0 = unlimited; inf (unknown distance) always passes."""
+    if not max_disp or max_disp <= 0:
+        return True
+    if d == float('inf'):
+        return True
+    return d <= max_disp
+
+def _same_station(bid_a, bid_b) -> bool:
+    """Checkbox building_id can be composite ('111111_222222'). Two vehicles
+    share a station if any component matches."""
+    a = set(str(bid_a).split("_")) - {""}
+    b = set(str(bid_b).split("_")) - {""}
+    if not a or not b:
+        return False
+    return bool(a & b)
 
 def _crew_qualified(vm, sys_id, crew_entry) -> bool:
     """Training gate: True if the vehicle needs no training or its assigned

@@ -12,6 +12,45 @@ import random
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+MISSION_META_PATH = PROJECT_ROOT / 'data' / 'mission_meta.json'
+
+def load_mission_meta():
+    try:
+        if MISSION_META_PATH.exists():
+            data = json.loads(MISSION_META_PATH.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+def update_mission_meta(mission_ids):
+    """Record first_seen timestamps (never overwrite existing)."""
+    import time as _time
+    now = _time.time()
+    meta = load_mission_meta()
+    for mid in mission_ids:
+        mid = str(mid)
+        if mid not in meta:
+            meta[mid] = {"first_seen": now}
+    try:
+        MISSION_META_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = str(MISSION_META_PATH) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+        MISSION_META_PATH.parent.joinpath(tmp).replace(MISSION_META_PATH)
+    except Exception:
+        pass
+    return meta
+
+def get_mission_age(mission_id):
+    """Seconds since the mission was first seen (None if unknown)."""
+    import time as _time
+    meta = load_mission_meta()
+    entry = meta.get(str(mission_id))
+    if not entry or "first_seen" not in entry:
+        return None
+    return max(0.0, _time.time() - float(entry["first_seen"]))
+
 # Singleton — dynamic code, cache-aware (DRY via vehicle_manager helper)
 def _create_manager():
     return get_manager_for_code()
@@ -128,6 +167,8 @@ async def check_and_grab_missions(browsers, num_threads):
         with open(active_tmp, 'w') as outfile:
             json.dump(active_ids, outfile)
         os.replace(active_tmp, active_final)
+        # First-seen timestamps (alliance grace period)
+        update_mission_meta(active_ids)
         display_info(f"Mission data stored ({len(active_ids)} active ids).")
         
     except Exception as e:
