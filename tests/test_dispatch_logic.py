@@ -4,6 +4,7 @@ Run: venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 """
 import asyncio
 import json
+import re
 import sys
 import tempfile
 import time
@@ -27,6 +28,9 @@ from utils.dispatcher import (
     _mission_needs_signature,
     _same_station,
     within_dispatch_radius,
+    resolve_dispatch_radius,
+    credit_unit_eligible,
+    _crew_qualified,
     trailer_local_towers,
 )
 
@@ -559,6 +563,163 @@ class TestMissionMeta(unittest.TestCase):
         time.sleep(0.05)
         md.update_mission_meta(["111111"])
         self.assertEqual(md.load_mission_meta()["111111"]["first_seen"], first)
+
+
+class _FakeCrewVM:
+    """Minimal VehicleManager stand-in for _crew_qualified tests."""
+    def __init__(self, training):
+        self._training = training
+
+    def get_required_training(self, sys_id):
+        return self._training
+
+    def normalize(self, text):
+        return re.sub(r'[^a-z0-9]', '', (text or '').lower())
+
+
+class TestPersonnelEducationSolver(unittest.TestCase):
+    """G1 — mission personnel needs matched by crew education, not headcount."""
+
+    def setUp(self):
+        self.vm = VehicleManager(code="us")
+
+    def _avail(self, crew_edu_map):
+        avail = []
+        for vid, eds in crew_edu_map.items():
+            avail.append((vid, 13, 1.0, 0, 0, 0, 0))
+        return avail
+
+    def test_education_matching_selects_qualified_crew_only(self):
+        crew_edu = {
+            "v1": [self.vm.normalize("HazMat")],
+            "v2": [self.vm.normalize("HazMat")],
+            "v3": [self.vm.normalize("Firefighting")],
+        }
+        steps, rem, totals = solve_dispatch(
+            self.vm, {}, {}, self._avail(crew_edu),
+            personnel_needs=[{"name": "HazMat", "count": 2}],
+            crew_educations=crew_edu,
+        )
+        picked = [s[0] for s in steps]
+        self.assertEqual(sorted(picked), ["v1", "v2"])
+        self.assertNotIn("v3", picked)
+        self.assertEqual(totals["personnel"], 0)
+
+    def test_education_need_unsatisfiable_returns_no_steps(self):
+        crew_edu = {"v1": [self.vm.normalize("Firefighting")]}
+        steps, rem, totals = solve_dispatch(
+            self.vm, {}, {}, self._avail(crew_edu),
+            personnel_needs=[{"name": "HazMat", "count": 2}],
+            crew_educations=crew_edu,
+        )
+        self.assertEqual(steps, [])
+
+    def test_education_partial_containment(self):
+        # crew course "Firefighting: HazMat" must satisfy requirement "HazMat"
+        crew_edu = {"v1": [self.vm.normalize("Firefighting: HazMat")]}
+        steps, rem, totals = solve_dispatch(
+            self.vm, {}, {}, self._avail(crew_edu),
+            personnel_needs=[{"name": "HazMat", "count": 1}],
+            crew_educations=crew_edu,
+        )
+        self.assertEqual([s[0] for s in steps], ["v1"])
+
+    def test_education_mode_ignores_scalar_personnel(self):
+        # In education mode a crew of 12 unqualified must NOT satisfy the need
+        crew_edu = {"v1": [self.vm.normalize("Firefighting")]}
+        steps, rem, totals = solve_dispatch(
+            self.vm, {}, {}, [("v1", 13, 1.0, 0, 0, 0, 12)],
+            personnel_needed=100,
+            personnel_needs=[{"name": "HazMat", "count": 1}],
+            crew_educations=crew_edu,
+        )
+        self.assertEqual(steps, [])
+
+
+class TestVehicleClassRadius(unittest.TestCase):
+    """G4 — per-class dispatch radius resolution."""
+
+    def setUp(self):
+        self.vm = VehicleManager(code="us")
+
+    def test_resolve_radius_class_override_wins(self):
+        radius_map = {"police": 15, "fire": 35}
+        self.assertEqual(resolve_dispatch_radius(radius_map, "police", 0), 15)
+        self.assertEqual(resolve_dispatch_radius(radius_map, "fire", 100), 35)
+
+    def test_resolve_radius_falls_back_to_global(self):
+        radius_map = {"police": 15}
+        self.assertEqual(resolve_dispatch_radius(radius_map, "heavy", 60), 60)
+        self.assertEqual(resolve_dispatch_radius({}, "heavy", 60), 60)
+        self.assertEqual(resolve_dispatch_radius(radius_map, "trailer", 0), 0)
+
+    def test_resolve_radius_zero_class_entry_is_fallback(self):
+        self.assertEqual(resolve_dispatch_radius({"trailer": 0}, "trailer", 10), 10)
+
+    def test_vehicle_class_mapping(self):
+        self.assertEqual(self.vm.vehicle_class(10), "police")
+        self.assertEqual(self.vm.vehicle_class(5), "ambulance")
+        self.assertIn(self.vm.vehicle_class(13), ("fire", "heavy"))
+        self.assertEqual(self.vm.vehicle_class(33), "fire")
+        self.assertEqual(self.vm.vehicle_class(None), "default")
+
+    def test_vehicle_class_trailer(self):
+        trailer_ids = {info.get("id") for info in self.vm.trailers.values()}
+        for tid in list(trailer_ids)[:2]:
+            self.assertEqual(self.vm.vehicle_class(tid), "trailer")
+
+
+class TestCreditOnlyUnit(unittest.TestCase):
+    """G3 — alliance credit-only eligibility (pure)."""
+
+    def setUp(self):
+        self.vm = VehicleManager(code="us")
+        self.trailer_sys = next(iter(
+            {info.get("id") for info in self.vm.trailers.values()}), None)
+
+    def test_eligible_unit(self):
+        self.assertTrue(credit_unit_eligible(13, "1", False, False, self.vm))
+        self.assertTrue(credit_unit_eligible(13, "2", False, False, self.vm))
+        self.assertTrue(credit_unit_eligible(13, "", False, False, self.vm))
+
+    def test_checked_locked_or_bad_fms_rejected(self):
+        self.assertFalse(credit_unit_eligible(13, "1", True, False, self.vm))
+        self.assertFalse(credit_unit_eligible(13, "1", False, True, self.vm))
+        self.assertFalse(credit_unit_eligible(13, "3", False, False, self.vm))
+        self.assertFalse(credit_unit_eligible(None, "1", False, False, self.vm))
+
+    def test_trailer_rejected(self):
+        if self.trailer_sys is not None:
+            self.assertFalse(credit_unit_eligible(
+                self.trailer_sys, "1", False, False, self.vm))
+
+
+class TestStrictCrew(unittest.TestCase):
+    """G5 — strict crew validation must not fail open."""
+
+    def test_fail_open_by_default(self):
+        vm = _FakeCrewVM(["Academy: HazMat (3d)"])
+        self.assertTrue(_crew_qualified(vm, 6, None, strict=False))
+        self.assertTrue(_crew_qualified(vm, 6, {"personnel": 0}, strict=False))
+
+    def test_strict_blocks_unknown_or_empty_crew(self):
+        vm = _FakeCrewVM(["Academy: HazMat (3d)"])
+        self.assertFalse(_crew_qualified(vm, 6, None, strict=True))
+        self.assertFalse(_crew_qualified(vm, 6, {"personnel": 0, "educations": []}, strict=True))
+
+    def test_strict_accepts_qualified_crew(self):
+        vm = _FakeCrewVM(["Academy: HazMat (3d)"])
+        self.assertTrue(_crew_qualified(
+            vm, 6, {"personnel": 4, "educations": ["HazMat"]}, strict=True))
+
+    def test_qualified_but_untrained_still_blocked(self):
+        vm = _FakeCrewVM(["Academy: HazMat (3d)"])
+        self.assertFalse(_crew_qualified(
+            vm, 6, {"personnel": 4, "educations": ["Firefighting"]}, strict=True))
+
+    def test_no_training_requirement_always_passes(self):
+        vm = _FakeCrewVM([])
+        self.assertTrue(_crew_qualified(vm, 13, None, strict=True))
 
 
 if __name__ == "__main__":
